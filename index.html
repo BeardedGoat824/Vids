@@ -1,0 +1,1110 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Audio Visualizer</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Rye&family=Sancreek&family=Smokum&family=Alfa+Slab+One&family=Bevan&family=Special+Elite&family=Cinzel+Decorative:wght@700&display=swap">
+<style>
+  :root { --bg:#0b0b12; --panel:#15151f; --line:#272738; --fg:#e8e8f0; --dim:#8a8aa3; --acc:#8b5cf6; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:14px/1.4 system-ui,sans-serif; display:grid; grid-template-columns:320px 1fr; min-height:100vh; }
+  aside { background:var(--panel); border-right:1px solid var(--line); padding:16px; overflow-y:auto; max-height:100vh; }
+  h1 { font-size:16px; margin:0 0 14px; }
+  label { display:block; margin:10px 0 4px; color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+  input[type=text], select { width:100%; padding:7px 8px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; }
+  textarea { width:100%; padding:7px 8px; background:var(--bg); color:var(--fg); border:1px solid var(--line); border-radius:6px; font:12px/1.4 ui-monospace,monospace; resize:vertical; }
+  input[type=range] { width:100%; }
+  input[type=file] { width:100%; font-size:12px; color:var(--dim); }
+  input[type=checkbox] { margin-right:6px; }
+  button { width:100%; margin-top:8px; padding:10px; background:var(--acc); color:#fff; border:0; border-radius:6px; font-weight:600; cursor:pointer; }
+  button.alt { background:var(--line); }
+  button:disabled { opacity:.4; cursor:not-allowed; }
+  details { margin-top:10px; border:1px solid var(--line); border-radius:6px; padding:8px; }
+  summary { cursor:pointer; color:var(--dim); font-size:12px; text-transform:uppercase; letter-spacing:.05em; }
+  main { display:flex; flex-direction:column; align-items:center; justify-content:center; padding:16px; gap:10px; }
+  canvas { max-width:100%; max-height:80vh; background:#000; border-radius:8px; }
+  #status { color:var(--dim); font-size:13px; min-height:18px; margin-top:6px; white-space:pre-line; }
+  .row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
+  main, aside { min-width:0; }
+  html { -webkit-text-size-adjust:100%; }
+
+  /* ===== Mobile / small screens ===== */
+  @media (max-width: 800px) {
+    body { display:flex; flex-direction:column; min-height:100vh; min-height:100dvh; font-size:15px; overflow-x:hidden; }
+    /* preview goes on top and stays pinned while you scroll the controls */
+    main { order:-1; position:sticky; top:0; z-index:10; background:var(--bg); border-bottom:1px solid var(--line);
+           padding:calc(8px + env(safe-area-inset-top)) calc(8px + env(safe-area-inset-right)) 8px calc(8px + env(safe-area-inset-left)); gap:0; }
+    canvas { width:auto; height:auto; max-width:100%; max-height:38vh; max-height:38dvh; }
+    aside { border-right:0; max-height:none; overflow-y:visible;
+            padding:16px calc(16px + env(safe-area-inset-right)) calc(32px + env(safe-area-inset-bottom)) calc(16px + env(safe-area-inset-left)); }
+    h1 { font-size:18px; }
+    label { font-size:12px; margin:14px 0 6px; }
+    /* 16px stops iOS from zooming the page when a field is tapped */
+    input[type=text], select, textarea { font-size:16px; padding:11px 10px; min-height:44px; }
+    textarea { font-size:14px; }
+    input[type=file] { font-size:14px; padding:6px 0; }
+    input[type=file]::file-selector-button { min-height:40px; padding:0 12px; margin-right:10px; border:0; border-radius:6px; background:var(--line); color:var(--fg); font-weight:600; }
+    input[type=range] { height:32px; margin:0; }
+    input[type=checkbox] { width:22px; height:22px; margin:0 10px 0 0; vertical-align:middle; accent-color:var(--acc); }
+    label:has(> input[type=checkbox]) { display:flex; align-items:center; min-height:44px; margin:0 !important; }
+    button { min-height:48px; font-size:16px; margin-top:12px; }
+    summary { padding:12px 0; }
+    details { padding:4px 12px 12px; }
+    .row { gap:10px; }
+    /* the two Model / Language columns get tight on a phone, so stack them */
+    details .row { flex-direction:column; gap:0; }
+    #status { font-size:14px; min-height:20px; margin-top:12px; }
+  }
+  @media (max-width: 380px) {
+    aside { padding-left:12px; padding-right:12px; }
+    .row { flex-direction:column; gap:0; }
+  }
+</style>
+</head>
+<body>
+<aside>
+  <h1>Audio Visualizer</h1>
+  <label>Music</label><input type="file" id="audioFile" accept="audio/*">
+  <label>Lyrics (.lrc, or a FLAC / M4A with embedded lyrics)</label><input type="file" id="lrcFile" accept=".lrc,.txt,.flac,.m4a,.mp4">
+  <label>Background image or video (optional)</label><input type="file" id="bgFile" accept="image/*,video/*">
+  <label>Logo (optional)</label><input type="file" id="logoFile" accept="image/*">
+
+  <details>
+    <summary>Auto-generate LRC</summary>
+    <label>Paste lyrics (one line per row)</label>
+    <textarea id="plain" rows="8" placeholder="Paste plain lyrics here. Blank lines are ignored."></textarea>
+    <div class="row">
+      <div><label>Model</label>
+        <select id="model">
+          <option value="onnx-community/whisper-tiny_timestamped">tiny (fast)</option>
+          <option value="onnx-community/whisper-base_timestamped" selected>base</option>
+          <option value="onnx-community/whisper-small_timestamped">small (best)</option>
+        </select></div>
+      <div><label>Language</label><input type="text" id="lang" value="english" placeholder="auto"></div>
+    </div>
+    <button id="auto" disabled>Generate &amp; load LRC</button>
+  </details>
+
+  <details>
+    <summary>Edit lyrics</summary>
+    <label>One line per row: [mm:ss.xx] words</label>
+    <textarea id="lyricEdit" rows="12" spellcheck="false" placeholder="Load a song with lyrics (or an .lrc file) and they show up here. Edit the words or the times and the preview updates as you type."></textarea>
+    <div id="lyricHint" style="color:var(--dim);font-size:12px;margin-top:6px">A row with only a time, like [01:23.40], marks where the line above it ends. Changes show up in the preview right away.</div>
+    <button id="lyricDl" class="alt">Download .lrc</button>
+  </details>
+
+  <label>Title</label><input type="text" id="title" value="Song Title">
+  <label>Artist</label><input type="text" id="artist" value="Artist Name">
+  <label>Text size</label><input type="range" id="textSize" min="0.5" max="2" step="0.1" value="1">
+  <label>Text position</label><input type="range" id="textY" min="0.1" max="0.9" step="0.01" value="0.35">
+  <label><input type="checkbox" id="showLyrics" checked> Show lyrics</label>
+  <label>Lyrics position</label><input type="range" id="lyricsY" min="0.5" max="0.95" step="0.01" value="0.78">
+  <label>Lyric animation</label>
+  <select id="lyricAnim">
+    <option value="classic">Classic (sweeping highlight)</option>
+    <option value="fade">Fade in</option>
+    <option value="slide">Slide up</option>
+    <option value="roll">Rolodex roll</option>
+    <option value="flip">Card flip</option>
+    <option value="flash">Flash / strobe</option>
+    <option value="pop">Pop (zoom in)</option>
+    <option value="wordpop">Word pop (drops in as sung)</option>
+    <option value="typewriter">Typewriter</option>
+    <option value="glitch">Glitch</option>
+    <option value="wave">Wave (letters ripple)</option>
+  </select>
+  <label>Animation speed</label><input type="range" id="animSpeed" min="0.5" max="2" step="0.1" value="1">
+  <label>Lyrics opacity</label><input type="range" id="lyricAlpha" min="0.2" max="1" step="0.05" value="0.65">
+  <label>Lyrics font</label>
+  <select id="lyricFont">
+    <option value="">System (clean)</option>
+    <option value='"Rye"'>Rye — western wood type</option>
+    <option value='"Sancreek"'>Sancreek — western, chiseled</option>
+    <option value='"Smokum"'>Smokum — western, tall</option>
+    <option value='"Alfa Slab One"'>Alfa Slab One — heavy slab</option>
+    <option value='"Bevan"'>Bevan — slab serif</option>
+    <option value='"Special Elite"'>Special Elite — typewriter</option>
+    <option value='"Cinzel Decorative"'>Cinzel Decorative</option>
+  </select>
+  <label style="margin:6px 0 4px">Or upload your exact font (.ttf / .otf / .woff)</label>
+  <input type="file" id="fontFile" accept=".ttf,.otf,.woff,.woff2">
+  <label style="margin:6px 0;text-transform:none;font-size:13px"><input type="checkbox" id="fontTitle" checked> Use it for title &amp; artist too</label>
+
+  <label>Reactions</label>
+  <label style="margin:2px 0;text-transform:none;font-size:13px"><input type="checkbox" id="fxShake" checked> Shake on kicks</label>
+  <label style="margin:2px 0;text-transform:none;font-size:13px"><input type="checkbox" id="fxFlash" checked> Color flash on loud hits</label>
+  <label style="margin:2px 0;text-transform:none;font-size:13px"><input type="checkbox" id="fxReveal"> Letter-by-letter reveal</label>
+  <label style="margin:2px 0;text-transform:none;font-size:13px"><input type="checkbox" id="fxGlow" checked> Glow &amp; shadows (turn off if slow)</label>
+  <label>Reaction intensity</label><input type="range" id="fxAmt" min="0.2" max="2" step="0.1" value="1">
+
+  <label>Theme</label><select id="theme"></select>
+  <label>Visualization</label>
+  <select id="style">
+    <option value="none">None</option>
+    <option value="lyrics">Lyrics as visualizer</option>
+    <option value="bars">Bars</option>
+    <option value="mirror">Mirrored bars</option>
+    <option value="circle">Circular</option>
+    <option value="wave">Waveform</option>
+  </select>
+  <label>Sensitivity</label><input type="range" id="gain" min="0.5" max="2.5" step="0.1" value="1.2">
+  <label>Smoothing</label><input type="range" id="smooth" min="0" max="0.95" step="0.01" value="0.8">
+  <label>Bar count</label><input type="range" id="bars" min="16" max="128" step="8" value="64">
+
+  <label>Format</label>
+  <select id="aspect">
+    <option value="1920x1080">Landscape 16:9</option>
+    <option value="1080x1920">Vertical 9:16</option>
+    <option value="1080x1080">Square 1:1</option>
+  </select>
+
+  <label>MP4 export size</label>
+  <select id="exportSize">
+    <option value="1080">1080p (sharpest, slowest)</option>
+    <option value="720" selected>720p (faster)</option>
+    <option value="540">540p (fastest)</option>
+  </select>
+  <button id="exportMp4" disabled>Export MP4 (fast)</button>
+  <div class="row">
+    <button id="play" class="alt" disabled>Play preview</button>
+    <button id="export" class="alt" disabled>Export WebM</button>
+  </div>
+  <div id="status">Load a song to begin.</div>
+</aside>
+<main><canvas id="cv" width="1920" height="1080"></canvas></main>
+
+<script>
+const $ = id => document.getElementById(id);
+const liveCv = $('cv'), liveCtx = liveCv.getContext('2d');
+let cv = liveCv, ctx = liveCtx;   // exports temporarily point these at an off-screen canvas
+const status = s => $('status').textContent = s;
+
+const THEMES = {
+  'Cosmic Purple':  ['#1a0b3b','#4c1d95','#c084fc','#f0abfc'],
+  'Deep Ocean':     ['#021b2e','#0c4a6e','#38bdf8','#a5f3fc'],
+  'Neon Synthwave': ['#14002e','#7c1d6f','#ff2e93','#22d3ee'],
+  'Warm Ember':     ['#1c0a02','#7c2d12','#fb923c','#fde68a'],
+  'Forest Glow':    ['#04140a','#14532d','#4ade80','#d9f99d'],
+  'Midnight':       ['#05060a','#111827','#6366f1','#e5e7eb'],
+  'Cyberpunk':      ['#0a0a0f','#1e1b4b','#facc15','#06b6d4'],
+  'Volcano':        ['#120303','#7f1d1d','#ef4444','#fbbf24'],
+  'Foxfire Rust':   ['#0b0d14','#1d2433','#c8a47a','#e6d2ae'],
+};
+for (const k in THEMES) $('theme').add(new Option(k, k));
+
+let audioCtx, analyser, srcNode, destNode, audioEl, audioFile, freq, td, bgImg, logoImg, playing = false, exporting = false;
+const smoothed = new Float32Array(256);
+// Fast MP4 export needs the browser's built-in video + audio encoders (WebCodecs, secure pages only).
+const MP4_OK = !!(window.VideoEncoder && window.AudioEncoder && window.VideoFrame && window.AudioData);
+// Real-time recorder (plays the song while recording): MP4 where the browser supports it (recent Chrome/Safari), otherwise WebM.
+const RT_MIME = window.MediaRecorder ? ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4',
+  'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) : undefined;
+const RT_EXT = RT_MIME && RT_MIME.startsWith('video/mp4') ? 'mp4' : 'webm';
+const RT_LABEL = 'Record in real time (.' + RT_EXT + ')';
+$('export').textContent = RT_LABEL;
+if (!MP4_OK) { $('exportMp4').textContent = 'MP4 export not supported in this browser'; $('exportMp4').title = 'Use “Record in real time” instead'; }
+
+function loadImg(file, cb) { if (!file) return cb(null); const i = new Image(); i.onload = () => cb(i); i.src = URL.createObjectURL(file); }
+let bgVideo = null;
+$('bgFile').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  if (bgVideo) { bgVideo.pause(); bgVideo.removeAttribute('src'); bgVideo = null; }
+  bgImg = null;
+  if (f.type.startsWith('video/')) {
+    const v = document.createElement('video');
+    v.src = URL.createObjectURL(f); v.loop = true; v.muted = true; v.playsInline = true;   // video's own sound is never used
+    v.onloadeddata = () => { bgVideo = v; };
+  } else loadImg(f, i => bgImg = i);
+};
+$('logoFile').onchange = e => loadImg(e.target.files[0], i => logoImg = i);
+$('aspect').onchange = () => { const [w,h] = $('aspect').value.split('x'); cv.width = +w; cv.height = +h; };
+
+$('audioFile').onchange = e => {
+  const f = e.target.files[0]; if (!f) return;
+  audioFile = f;
+  if (audioEl) audioEl.pause();
+  audioEl = new Audio(URL.createObjectURL(f));
+  audioEl.onended = () => { playing = false; $('play').textContent = 'Play preview'; if (exporting) stopExport(); };
+  if (!audioCtx) {
+    audioCtx = new AudioContext();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    freq = new Uint8Array(analyser.frequencyBinCount);
+    td = new Uint8Array(analyser.fftSize);
+    destNode = audioCtx.createMediaStreamDestination();
+  }
+  if (srcNode) srcNode.disconnect();
+  srcNode = audioCtx.createMediaElementSource(audioEl);
+  srcNode.connect(analyser);
+  analyser.connect(audioCtx.destination);
+  analyser.connect(destNode);
+  if (!$('title').dataset.touched) $('title').value = f.name.replace(/\.[^.]+$/, '');
+  $('play').disabled = $('export').disabled = $('auto').disabled = false;
+  $('exportMp4').disabled = !MP4_OK;
+  status('Ready.');
+  embeddedLyrics(f).then(txt => { if (!txt) return; const l = parseLRC(txt); if (l.length) { lines = l; syncEditor(); status(`Ready. Loaded ${l.length} lyric lines from the file.`); } }).catch(() => {});
+};
+$('title').oninput = () => $('title').dataset.touched = 1;
+
+$('play').onclick = async () => {
+  await audioCtx.resume();
+  if (playing) { audioEl.pause(); playing = false; $('play').textContent = 'Play preview'; }
+  else { audioEl.play(); playing = true; $('play').textContent = 'Pause'; }
+};
+
+// ================= LRC =================
+// lines: [{t, end, words:[{t, end, text}]}]  (word text keeps its trailing space)
+let lines = [];
+const TS = /\[(\d+):(\d+(?:\.\d+)?)\]/g;
+const toSec = (m, s) => +m * 60 + +s;
+
+// Handles standard LRC ([mm:ss.xx] line), multiple stamps per line, empty-line end markers,
+// and enhanced LRC with <mm:ss.xx> word stamps. Without word stamps, word times are estimated.
+function parseLRC(text) {
+  const entries = [];
+  for (const raw of text.split(/\r?\n/)) {
+    const stamps = [...raw.matchAll(TS)];
+    if (!stamps.length) continue;
+    const body = raw.replace(TS, '').trim();
+    for (const m of stamps) entries.push({ t: toSec(m[1], m[2]), body });
+  }
+  entries.sort((a, b) => a.t - b.t);
+  const out = [];
+  entries.forEach((e, i) => {
+    if (!e.body) return;
+    const end = entries[i + 1] ? entries[i + 1].t : e.t + 5;
+    const L = { t: e.t, end, words: [] };
+    if (/<\d+:\d+/.test(e.body)) {
+      let cur = e.t;
+      for (const part of e.body.split(/(<\d+:\d+(?:\.\d+)?>)/)) {
+        const m = part.match(/^<(\d+):(\d+(?:\.\d+)?)>$/);
+        if (m) cur = toSec(m[1], m[2]);
+        else if (part.trim()) L.words.push({ t: cur, end: NaN, text: part.trim() + ' ' });
+      }
+      L.words.forEach((w, k) => w.end = L.words[k + 1] ? L.words[k + 1].t : end);
+    } else {
+      const ws = e.body.split(/\s+/), dur = Math.min(end - e.t, Math.max(1, ws.length * 0.5));
+      const total = ws.reduce((s, w) => s + w.length + 1, 0);
+      let c = e.t;
+      for (const w of ws) { const d = dur * (w.length + 1) / total; L.words.push({ t: c, end: c + d, text: w + ' ' }); c += d; }
+      L.end = e.t + dur;
+    }
+    if (!L.words.length) return;
+    const lw = L.words[L.words.length - 1]; lw.text = lw.text.trimEnd();
+    out.push(L);
+  });
+  return out;
+}
+
+// Read LYRICS / UNSYNCEDLYRICS from a FLAC's Vorbis comment block.
+async function flacLyrics(file) {
+  const rd = async (a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer());
+  if (String.fromCharCode(...await rd(0, 4)) !== 'fLaC') return null;
+  let pos = 4;
+  for (;;) {
+    const h = await rd(pos, pos + 4); if (h.length < 4) return null;
+    const last = h[0] & 0x80, type = h[0] & 0x7f, len = (h[1] << 16) | (h[2] << 8) | h[3];
+    pos += 4;
+    if (type === 4) {
+      const b = await rd(pos, pos + len), dv = new DataView(b.buffer), dec = new TextDecoder();
+      let o = 4 + dv.getUint32(0, true);
+      const n = dv.getUint32(o, true); o += 4;
+      for (let i = 0; i < n; i++) {
+        const l = dv.getUint32(o, true); o += 4;
+        const s = dec.decode(b.subarray(o, o + l)); o += l;
+        const eq = s.indexOf('=');
+        if (/^(UN)?SYNCEDLYRICS$|^LYRICS$/i.test(s.slice(0, eq)) && /\[\d+:\d+/.test(s)) return s.slice(eq + 1);
+      }
+    }
+    if (last) return null;
+    pos += len;
+  }
+}
+
+// Read synced lyrics from an M4A/MP4: moov > udta > meta > ilst > ©lyr (or a freeform LYRICS atom).
+async function mp4Lyrics(file) {
+  const rd = async (a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer());
+  const latin = u8 => String.fromCharCode(...u8);
+  let pos = 0, moov = null;
+  while (pos < file.size) {
+    const h = await rd(pos, pos + 16); if (h.length < 8) return null;
+    const dv = new DataView(h.buffer);
+    let size = dv.getUint32(0), hdr = 8;
+    const type = latin(h.subarray(4, 8));
+    if (size === 1) { size = Number(dv.getBigUint64(8)); hdr = 16; }
+    else if (size === 0) size = file.size - pos;
+    if (size < hdr) return null;
+    if (type === 'moov') { moov = await rd(pos + hdr, pos + size); break; }
+    pos += size;
+  }
+  if (!moov) return null;
+  const boxes = (s, e) => {
+    const out = [];
+    while (s + 8 <= e) {
+      const size = new DataView(moov.buffer, moov.byteOffset + s, 4).getUint32(0);
+      if (size < 8) break;
+      out.push({ type: latin(moov.subarray(s + 4, s + 8)), start: s + 8, end: Math.min(e, s + size) });
+      s += size;
+    }
+    return out;
+  };
+  const child = (box, type, skip = 0) => box && boxes(box.start + skip, box.end).find(x => x.type === type);
+  const ilst = child(child(child({ start: 0, end: moov.length }, 'udta'), 'meta', 4), 'ilst');
+  if (!ilst) return null;
+  const dec = new TextDecoder(), found = [];
+  for (const it of boxes(ilst.start, ilst.end)) {
+    let isLyrics = it.type === '\u00a9lyr';
+    if (it.type === '----') { const nm = child(it, 'name'); isLyrics = !!nm && /lyrics/i.test(dec.decode(moov.subarray(nm.start + 4, nm.end))); }
+    if (!isLyrics) continue;
+    const d = child(it, 'data');
+    if (d) found.push(dec.decode(moov.subarray(d.start + 8, d.end)));   // skip type + locale
+  }
+  return found.find(t => /\[\d+:\d+/.test(t)) || null;
+}
+
+// Some M4As (e.g. Suno exports) keep the timed lyrics as a subtitle track (mov_text) instead of a tag.
+// Reads that track and returns it as LRC text: one "[mm:ss.xx] line" per cue, plus an empty stamp where a cue ends before the next begins.
+async function mp4Subtitles(file) {
+  const rd = async (a, b) => new Uint8Array(await file.slice(a, b).arrayBuffer());
+  const latin = u8 => String.fromCharCode(...u8);
+  let pos = 0, moov = null;
+  while (pos < file.size) {
+    const h = await rd(pos, pos + 16); if (h.length < 8) return null;
+    const hv = new DataView(h.buffer);
+    let size = hv.getUint32(0), hdr = 8;
+    const type = latin(h.subarray(4, 8));
+    if (size === 1) { size = Number(hv.getBigUint64(8)); hdr = 16; }
+    else if (size === 0) size = file.size - pos;
+    if (size < hdr) return null;
+    if (type === 'moov') { moov = await rd(pos + hdr, pos + size); break; }
+    pos += size;
+  }
+  if (!moov) return null;
+  const dv = new DataView(moov.buffer, moov.byteOffset, moov.byteLength);
+  const kids = (s, e) => {
+    const out = [];
+    while (s + 8 <= e) {
+      let size = dv.getUint32(s), hdr = 8;
+      if (size === 1) { size = Number(dv.getBigUint64(s + 8)); hdr = 16; }
+      if (size < hdr) break;
+      out.push({ type: latin(moov.subarray(s + 4, s + 8)), start: s + hdr, end: Math.min(e, s + size) });
+      s += size;
+    }
+    return out;
+  };
+  const child = (box, type) => box && kids(box.start, box.end).find(x => x.type === type);
+  const dec = new TextDecoder();
+  for (const trak of kids(0, moov.length).filter(b => b.type === 'trak')) {
+    const mdia = child(trak, 'mdia'), hdlr = child(mdia, 'hdlr');
+    if (!hdlr || !['sbtl', 'text', 'subt'].includes(latin(moov.subarray(hdlr.start + 8, hdlr.start + 12)))) continue;
+    const mdhd = child(mdia, 'mdhd'), stbl = child(child(mdia, 'minf'), 'stbl');
+    if (!mdhd || !stbl) continue;
+    const timescale = dv.getUint32(mdhd.start + (moov[mdhd.start] === 1 ? 20 : 12));
+    const stts = child(stbl, 'stts'), stsz = child(stbl, 'stsz'), stsc = child(stbl, 'stsc');
+    const stco = child(stbl, 'stco'), co64 = child(stbl, 'co64');
+    if (!stts || !stsz || !stsc || !(stco || co64)) continue;
+
+    // sample sizes
+    const fixed = dv.getUint32(stsz.start + 4), count = dv.getUint32(stsz.start + 8);
+    const sizes = Array.from({ length: count }, (_, i) => fixed || dv.getUint32(stsz.start + 12 + i * 4));
+    // start time + duration of each sample
+    const times = []; let acc = 0;
+    for (let n = dv.getUint32(stts.start + 4), o = stts.start + 8, i = 0; i < n; i++, o += 8) {
+      const c = dv.getUint32(o), d = dv.getUint32(o + 4);
+      for (let k = 0; k < c; k++) { times.push({ t: acc / timescale, end: (acc + d) / timescale }); acc += d; }
+    }
+    // absolute file offset of each sample (chunk table + samples-per-chunk table)
+    const chunkOff = co64
+      ? Array.from({ length: dv.getUint32(co64.start + 4) }, (_, i) => Number(dv.getBigUint64(co64.start + 8 + i * 8)))
+      : Array.from({ length: dv.getUint32(stco.start + 4) }, (_, i) => dv.getUint32(stco.start + 8 + i * 4));
+    const runs = Array.from({ length: dv.getUint32(stsc.start + 4) }, (_, i) =>
+      ({ first: dv.getUint32(stsc.start + 8 + i * 12), per: dv.getUint32(stsc.start + 12 + i * 12) }));
+    const offs = []; let s = 0;
+    chunkOff.forEach((base, ci) => {
+      let per = 0; for (const r of runs) if (r.first <= ci + 1) per = r.per;
+      let o = base; for (let k = 0; k < per && s < count; k++, s++) { offs.push(o); o += sizes[s]; }
+    });
+
+    // each text sample: 2-byte length, then the UTF-8 text (length 0 = nothing shown)
+    const cues = [];
+    for (let i = 0; i < Math.min(count, offs.length, times.length); i++) {
+      if (sizes[i] < 3) continue;
+      const b = await rd(offs[i], offs[i] + sizes[i]);
+      const text = dec.decode(b.subarray(2, 2 + ((b[0] << 8) | b[1]))).replace(/\s*\r?\n\s*/g, ' ').trim();
+      if (text) cues.push({ t: times[i].t, end: times[i].end, text });
+    }
+    if (!cues.length) continue;
+    const st = t => { const cs = Math.round(t * 100), m = Math.floor(cs / 6000); return `[${String(m).padStart(2, '0')}:${((cs % 6000) / 100).toFixed(2).padStart(5, '0')}]`; };
+    const out = [];
+    cues.forEach((c, i) => {
+      out.push(`${st(c.t)} ${c.text}`);
+      if (!cues[i + 1] || cues[i + 1].t - c.end > 0.3) out.push(st(c.end));   // empty stamp = line ends
+    });
+    return out.join('\n');
+  }
+  return null;
+}
+
+// Pick the right reader by sniffing the file header.
+async function embeddedLyrics(file) {
+  const h = new Uint8Array(await file.slice(0, 12).arrayBuffer());
+  const tag = String.fromCharCode(...h);
+  if (tag.startsWith('fLaC')) return flacLyrics(file);
+  if (tag.slice(4, 8) === 'ftyp') return (await mp4Lyrics(file)) || (await mp4Subtitles(file));
+  return null;
+}
+
+$('lrcFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  let text;
+  if (/\.(flac|m4a|mp4)$/i.test(f.name)) {
+    try { text = await embeddedLyrics(f); } catch { text = null; }
+    if (!text) { lines = []; syncEditor(); return status('No timestamped lyrics found inside that file.'); }
+  } else text = await f.text();
+  lines = parseLRC(text); syncEditor();
+  status(lines.length ? `Loaded ${lines.length} lyric lines.` : 'No timestamped lines found in that file.');
+};
+
+// ---- lyric editor: the text box shows the lyrics as LRC and applies your edits as you type ----
+function syncEditor() { $('lyricEdit').value = lines.length ? buildLRC(lines) : ''; }
+let editTimer;
+$('lyricEdit').oninput = () => { clearTimeout(editTimer); editTimer = setTimeout(applyEdit, 250); };
+function applyEdit() {
+  const txt = $('lyricEdit').value;
+  if (!txt.trim()) { lines = []; return status('Lyrics cleared.'); }
+  const parsed = parseLRC(txt);
+  if (!parsed.length) return status('No “[mm:ss.xx] words” rows found yet — keeping the previous lyrics.');
+  const same = (a, b) => a.words.map(w => w.text).join('').trim() === b.words.map(w => w.text).join('').trim();
+  const old = lines;                                   // lines you didn't touch keep their exact per-word timing
+  lines = parsed.map(pl => old.find(o => Math.abs(o.t - pl.t) < 0.006 && same(o, pl)) || pl);
+  status(`Lyrics updated (${lines.length} lines).`);
+}
+$('lyricDl').onclick = () => {
+  if (!lines.length) return status('No lyrics to download yet.');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([buildLRC(lines)], { type: 'text/plain' }));
+  a.download = ($('title').value || 'lyrics') + '.lrc'; a.click();
+};
+
+const lrcStamp = t => { const m = Math.floor(t / 60), s = (t % 60).toFixed(2).padStart(5, '0'); return `[${String(m).padStart(2, '0')}:${s}]`; };
+function buildLRC(ls) {
+  const out = [];
+  ls.forEach((l, i) => {
+    out.push(`${lrcStamp(l.t)} ${l.words.map(w => w.text.trim()).join(' ')}`);
+    const next = ls[i + 1];
+    if (!next || next.t - l.end > 3) out.push(lrcStamp(l.end + 0.5));      // empty stamp = line ends (instrumental gap)
+  });
+  return out.join('\n') + '\n';
+}
+
+// ============ Auto LRC: Whisper word timestamps + alignment to your lyrics ============
+const norm = s => s.toLowerCase().normalize('NFKD').replace(/[^\p{L}\p{N}']/gu, '');
+function lev(a, b) {
+  const d = Array.from({ length: a.length + 1 }, (_, i) => [i]);
+  for (let j = 1; j <= b.length; j++) d[0][j] = j;
+  for (let i = 1; i <= a.length; i++) for (let j = 1; j <= b.length; j++)
+    d[i][j] = Math.min(d[i-1][j] + 1, d[i][j-1] + 1, d[i-1][j-1] + (a[i-1] === b[j-1] ? 0 : 1));
+  return d[a.length][b.length];
+}
+const sim = (a, b) => !a || !b ? 0 : 1 - lev(a, b) / Math.max(a.length, b.length);
+
+// Needleman-Wunsch: lyric words (A) vs recognised words (B). Returns match[i] = j or -1.
+function align(A, B) {
+  const n = A.length, m = B.length, GAP = -1;
+  const S = Array.from({ length: n + 1 }, () => new Float32Array(m + 1));
+  for (let i = 1; i <= n; i++) S[i][0] = i * GAP;
+  for (let j = 1; j <= m; j++) S[0][j] = j * GAP;
+  const sc = (a, b) => { const s = sim(a, b); return s >= 0.7 ? 2 * s : -1; };
+  for (let i = 1; i <= n; i++) for (let j = 1; j <= m; j++)
+    S[i][j] = Math.max(S[i-1][j-1] + sc(A[i-1], B[j-1]), S[i-1][j] + GAP, S[i][j-1] + GAP);
+  const match = new Array(n).fill(-1);
+  let i = n, j = m;
+  while (i > 0 && j > 0) {
+    if (S[i][j] === S[i-1][j-1] + sc(A[i-1], B[j-1])) { if (sim(A[i-1], B[j-1]) >= 0.7) match[i-1] = j-1; i--; j--; }
+    else if (S[i][j] === S[i-1][j] + GAP) i--; else j--;
+  }
+  return match;
+}
+
+async function toMono16k(file) {
+  const buf = await audioCtx.decodeAudioData(await file.arrayBuffer());
+  const off = new OfflineAudioContext(1, Math.ceil(buf.duration * 16000), 16000);
+  const src = off.createBufferSource(); src.buffer = buf; src.connect(off.destination); src.start();
+  return (await off.startRendering()).getChannelData(0);
+}
+
+$('auto').onclick = async () => {
+  const lyricLines = $('plain').value.split('\n').map(s => s.trim()).filter(Boolean);
+  if (!lyricLines.length) return status('Paste lyrics first.');
+  $('auto').disabled = true;
+  try {
+    status('Decoding audio…');
+    const pcm = await toMono16k(audioFile);
+    status('Loading model (first time downloads ~40–250 MB, then cached)…');
+    const { pipeline } = await import('https://cdn.jsdelivr.net/npm/@huggingface/transformers@3');
+    const make = device => pipeline('automatic-speech-recognition', $('model').value, {
+      device, dtype: device === 'webgpu' ? { encoder_model: 'fp32', decoder_model_merged: 'q4' } : 'q8',
+      progress_callback: p => p.status === 'progress' && status(`Downloading model… ${Math.round(p.progress)}%`),
+    });
+    let asr;
+    try { asr = navigator.gpu ? await make('webgpu') : await make('wasm'); } catch { asr = await make('wasm'); }
+    status('Transcribing — this can take a while for long songs…');
+    const lang = $('lang').value.trim().toLowerCase();
+    const res = await asr(pcm, { return_timestamps: 'word', chunk_length_s: 30, stride_length_s: 5, task: 'transcribe', ...(lang ? { language: lang } : {}) });
+    const heard = res.chunks.map(c => ({ w: norm(c.text), t: c.timestamp[0], end: c.timestamp[1] ?? c.timestamp[0] + 0.3 })).filter(c => c.w);
+    if (!heard.length) throw new Error('No speech recognised');
+
+    // flatten lyrics to words, remembering line membership
+    const words = [];
+    lyricLines.forEach((line, li) => line.split(/\s+/).forEach(text => { const w = norm(text); if (w) words.push({ text, w, li, t: NaN, end: NaN }); }));
+    const match = align(words.map(x => x.w), heard.map(x => x.w));
+    match.forEach((j, i) => { if (j >= 0) { words[i].t = heard[j].t; words[i].end = heard[j].end; } });
+    const anchored = match.filter(j => j >= 0).length;
+    if (anchored < Math.max(3, words.length * 0.15)) throw new Error(`Only ${anchored}/${words.length} words matched — try a bigger model or set the language`);
+
+    // interpolate unmatched words between anchors
+    const idx = words.map((x, i) => i).filter(i => !isNaN(words[i].t));
+    const first = idx[0], last = idx[idx.length - 1];
+    for (let i = 0; i < first; i++) { words[i].t = Math.max(0, words[first].t - (first - i) * 0.35); words[i].end = words[i].t + 0.3; }
+    for (let i = last + 1; i < words.length; i++) { words[i].t = words[last].end + (i - last - 1) * 0.35; words[i].end = words[i].t + 0.3; }
+    for (let k = 0; k < idx.length - 1; k++) {
+      const a = idx[k], b = idx[k + 1], gap = b - a - 1;
+      for (let g = 1; g <= gap; g++) {
+        const t0 = words[a].end, t1 = Math.max(t0, words[b].t), step = (t1 - t0) / (gap + 1);
+        words[a + g].t = t0 + step * (g - 1) + 0.0; words[a + g].end = t0 + step * g;
+      }
+    }
+    // enforce monotonic, non-negative durations
+    for (let i = 0; i < words.length; i++) {
+      if (i && words[i].t < words[i-1].t) words[i].t = words[i-1].t;
+      if (!(words[i].end > words[i].t)) words[i].end = words[i].t + 0.2;
+    }
+    const built = lyricLines.map((_, li) => {
+      const ws = words.filter(x => x.li === li); if (!ws.length) return null;
+      return { t: ws[0].t, end: ws[ws.length - 1].end, words: ws.map(x => ({ t: x.t, end: x.end, text: x.text + ' ' })) };
+    }).filter(Boolean);
+
+    lines = built; syncEditor();                     // keep the word-accurate timing for the preview
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(new Blob([buildLRC(built)], { type: 'text/plain' }));
+    a.download = ($('title').value || 'lyrics') + '.lrc'; a.click();
+    status(`Done: ${anchored}/${words.length} words matched. Lyrics loaded and LRC downloaded — preview it and fix by hand if needed.`);
+  } catch (err) { console.error(err); status('Auto-LRC failed: ' + err.message); }
+  $('auto').disabled = false;
+};
+
+// ================= fonts =================
+// Canvas only uses a web font once it is loaded, so load on selection.
+const fontCss = (size, weight, force) => {
+  const f = $('lyricFont').value;
+  return f && (force || $('fontTitle').checked) ? `400 ${Math.round(size)}px ${f}, system-ui, sans-serif` : `${weight} ${Math.round(size)}px system-ui, sans-serif`;
+};
+$('lyricFont').onchange = () => { const f = $('lyricFont').value; if (f) document.fonts.load(`40px ${f}`).catch(() => {}); };
+$('fontFile').onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  try {
+    const ff = new FontFace('CustomLyric', await f.arrayBuffer()); await ff.load(); document.fonts.add(ff);
+    let o = [...$('lyricFont').options].find(o => o.dataset.custom);
+    if (!o) { o = new Option('', '"CustomLyric"'); o.dataset.custom = 1; $('lyricFont').add(o); }
+    o.text = 'Uploaded: ' + f.name; $('lyricFont').value = '"CustomLyric"';
+  } catch { status('Could not load that font file.'); }
+};
+
+// ================= lyrics drawing =================
+let pulse = 0;   // smoothed bass energy 0..1, set each frame
+let kick = 0, flash = 0, kickCool = 0, flashCool = 0, avgBass = 0, avgEnergy = 0;   // beat-detector state
+function drawLine(line, cx, y, size, alpha, now, live, color, bounce = 0) {
+  ctx.font = fontCss(size, 600, true); ctx.textAlign = 'left';
+  let total = line.words.reduce((s, w) => s + ctx.measureText(w.text).width, 0);
+  const maxW = cv.width * 0.9;
+  if (total > maxW) { size *= maxW / total; ctx.font = fontCss(size, 600, true); total = maxW; }
+  let x = cx - total / 2;
+  const kara = live && !(line.words.length === 1 && line.words[0].whole);
+  if (!bounce && !(kara && $('fxReveal').checked)) {   // fast path: whole line in one draw, highlight = one clipped draw
+    const full = line.words.map(w => w.text).join(''), x0 = x;
+    if (!kara) { ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(full, x0, y); return; }
+    let bx = x0;                                       // x where the singing has reached
+    for (const w of line.words) {
+      const wd = ctx.measureText(w.text).width, p = Math.max(0, Math.min(1, (now - w.t) / Math.max(0.05, w.end - w.t)));
+      if (p >= 1) bx += wd; else { bx += wd * p; break; }
+    }
+    const top = y - size * 1.2, hgt = size * 1.6;
+    ctx.save(); ctx.beginPath(); ctx.rect(bx > x0 ? bx : x0 - 4, top, cv.width, hgt); ctx.clip();      // not yet sung: dim
+    ctx.globalAlpha = alpha * 0.4; ctx.fillStyle = '#fff'; ctx.fillText(full, x0, y); ctx.restore();
+    if (bx > x0) {                                                                                       // already sung: colour
+      ctx.save(); ctx.beginPath(); ctx.rect(x0 - 4, top, bx - x0 + 4, hgt); ctx.clip();
+      ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(full, x0, y); ctx.restore();
+    }
+    return;
+  }
+  for (const w of line.words) {
+    const wd = ctx.measureText(w.text).width;
+    const p = kara ? Math.max(0, Math.min(1, (now - w.t) / Math.max(0.05, w.end - w.t))) : 0;
+    const yy = bounce && p > 0 && p < 1 ? y - bounce * size * 0.18 : y;   // active word jumps with the beat
+    if (kara && $('fxReveal').checked) {              // letters appear as they're sung
+      const nChars = Math.ceil(w.text.trimEnd().length * p);
+      if (nChars > 0) { ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(w.text.slice(0, nChars), x, yy); }
+      x += wd; continue;
+    }
+    if (!kara) { ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(w.text, x, yy); }
+    else {
+      const top = yy - size * 1.2, hgt = size * 1.6;
+      if (p < 1) { ctx.save(); ctx.beginPath(); ctx.rect(p > 0 ? x + wd * p : x - 4, top, wd + 8, hgt); ctx.clip();
+        ctx.globalAlpha = alpha * 0.4; ctx.fillStyle = '#fff'; ctx.fillText(w.text, x, yy); ctx.restore(); }
+      if (p > 0) { ctx.save(); ctx.beginPath(); ctx.rect(x - 4, top, wd * p + 4, hgt); ctx.clip();
+        ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(w.text, x, yy); ctx.restore(); }
+    }
+    x += wd;
+  }
+}
+let timeOverride = null;                              // set while exporting MP4 so lyrics follow the render clock, not the player
+const nowT = () => timeOverride ?? audioEl.currentTime;
+// ---- lyric animations ----
+const clamp01 = x => Math.max(0, Math.min(1, x));
+const easeOut = x => 1 - Math.pow(1 - x, 3);
+const easeInOut = x => x < 0.5 ? 2 * x * x : 1 - Math.pow(-2 * x + 2, 2) / 2;
+const backOut = x => { const c1 = 1.70158, c3 = c1 + 1; return 1 + c3 * Math.pow(x - 1, 3) + c1 * Math.pow(x - 1, 2); };
+const rnd = k => { const v = Math.sin(k * 127.1) * 43758.5453; return v - Math.floor(v); };   // repeatable "random" so exports are stable
+
+// Per-word / per-letter styles: each unit is drawn on its own so it can move independently.
+function drawUnits(line, cy, size, alpha, now, color, mode, sp) {
+  ctx.font = fontCss(size, 600, true); ctx.textAlign = 'left';
+  let total = line.words.reduce((s, w) => s + ctx.measureText(w.text).width, 0);
+  const maxW = cv.width * 0.9;
+  if (total > maxW) { size *= maxW / total; ctx.font = fontCss(size, 600, true); total = maxW; }
+  const x0 = cv.width / 2 - total / 2;
+  let x = x0, cursorX = x0, ci = 0;
+  if (mode !== 'wordpop') ctx.shadowBlur = 0;            // per-letter glow is too heavy; word pop keeps its glow
+  for (const w of line.words) {
+    const wd = ctx.measureText(w.text).width, txt = w.text.trimEnd(), len = txt.length;
+    const p = clamp01((now - w.t) / Math.max(0.05, w.end - w.t));
+    if (mode === 'wordpop') {
+      const q = clamp01((now - (w.t - 0.03)) / (0.3 / sp));
+      if (q > 0) {
+        const sc = Math.max(0.01, backOut(q)), tw = ctx.measureText(txt).width;
+        ctx.save(); ctx.translate(x + tw / 2, cy - size * 0.3); ctx.scale(sc, sc);
+        ctx.globalAlpha = alpha * Math.min(1, q * 4); ctx.fillStyle = color; ctx.textAlign = 'center';
+        ctx.fillText(txt, 0, size * 0.3 - (1 - q) * size * 0.5); ctx.restore();
+      }
+    } else if (mode === 'typewriter') {
+      if (now >= w.t) {
+        const n = Math.ceil(len * p), shown = txt.slice(0, n);
+        ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText(shown, x, cy);
+        cursorX = x + ctx.measureText(shown).width;
+      }
+    } else if (mode === 'wave') {
+      for (let k = 0; k < len; k++, ci++) {
+        const cx = x + ctx.measureText(txt.slice(0, k)).width, dy = Math.sin(now * 7 * sp + ci * 0.55) * size * 0.14;
+        const sung = (k + 1) / len <= p + 0.001;
+        ctx.globalAlpha = alpha * (sung ? 1 : 0.4); ctx.fillStyle = sung ? color : '#fff';
+        ctx.fillText(txt[k], cx, cy + dy);
+      }
+    }
+    x += wd;
+  }
+  if (mode === 'typewriter' && Math.floor(now * 3) % 2 === 0) { ctx.globalAlpha = alpha; ctx.fillStyle = color; ctx.fillText('|', cursorX, cy); }
+}
+
+function drawLyrics(W, H, u, c2, c3) {
+  if (!$('showLyrics').checked || !lines.length || (!audioEl && timeOverride === null)) return;
+  const now = nowT();
+  let i = -1; for (let k = 0; k < lines.length && lines[k].t <= now; k++) i = k;
+  if (i < 0) return;
+  const asViz = $('style').value === 'lyrics';
+  const y = H * (asViz ? 0.5 : +$('lyricsY').value);
+  const size = (asViz ? 96 : 56) * u * +$('textSize').value * (asViz ? 1 + pulse * 0.12 : 1);
+  const gu = $('fxGlow').checked ? u : 0, oa = +$('lyricAlpha').value;
+  const L = lines[i], fadeIn = Math.min(1, (now - L.t) / 0.25);
+  const fadeOut = Math.max(0, Math.min(1, 1 - (now - (L.end + 1.5)) / 0.5));   // hide during long gaps
+  if (asViz) { ctx.shadowColor = c2; ctx.shadowBlur = (20 + pulse * 70) * gu; }
+  else { ctx.shadowColor = 'rgba(0,0,0,.8)'; ctx.shadowBlur = 14 * gu; }
+  const bounce = asViz ? pulse : 0;
+  const mode = $('lyricAnim').value, sp = +$('animSpeed').value, T = 0.45 / sp;
+  const age = now - L.t, p = clamp01(age / T), A = fadeOut * oa, prev = lines[i - 1];
+  const showPrev = prev && age < T && L.t - prev.end < 1.2;           // the outgoing line, only during the hand-over
+  const pivotY = y - size * 0.3;                                       // transforms pivot around the middle of the text
+  const place = (line, tf, a, live, col = c3) => {
+    ctx.save(); ctx.translate(W / 2 + (tf.dx || 0), pivotY + (tf.dy || 0));
+    if (tf.sx !== undefined || tf.sy !== undefined) ctx.scale(Math.max(0.001, tf.sx ?? 1), Math.max(0.001, tf.sy ?? 1));
+    drawLine(line, 0, size * 0.3, size, a, now, live, col, bounce); ctx.restore();
+  };
+  if (mode === 'fade') place(L, {}, A * easeOut(p), true);
+  else if (mode === 'slide') {
+    const e = easeOut(p);
+    if (showPrev) place(prev, { dy: -e * size * 1.2 }, A * (1 - e), false);
+    place(L, { dy: (1 - e) * size * 1.2 }, A * e, true);
+  } else if (mode === 'roll') {                                         // text rolls around a drum, like a rolodex
+    const q = easeInOut(p), R = size * 1.3;
+    if (showPrev) { const ph = q * Math.PI / 2; place(prev, { dy: -R * Math.sin(ph), sy: Math.cos(ph) }, A * Math.cos(ph), false); }
+    const ph = (1 - q) * Math.PI / 2; place(L, { dy: R * Math.sin(ph), sy: Math.cos(ph) }, A * Math.cos(ph), true);
+  } else if (mode === 'flip') {                                         // old card turns edge-on, new card turns face-on
+    if (showPrev && p < 0.5) place(prev, { sx: 1 - 2 * p }, A, false);
+    else if (!showPrev || p >= 0.5) place(L, { sx: showPrev ? 2 * p - 1 : p }, A, true);
+  } else if (mode === 'flash') {
+    if ($('fxFlash').checked && p < 1) { ctx.globalAlpha = 0.22 * (1 - p); ctx.fillStyle = c2; ctx.fillRect(-60, -60, W + 120, H + 120); }
+    const flick = age < T * 0.8, on = !flick || Math.floor(age * 40) % 2 === 0;
+    if (gu) { ctx.shadowColor = c3; ctx.shadowBlur = (asViz ? 20 : 14) * gu + (1 - p) * 70 * gu; }
+    if (on) place(L, { sx: 1 + 0.12 * (1 - p), sy: 1 + 0.12 * (1 - p) }, A, true, flick ? '#fff' : c3);
+  } else if (mode === 'pop') {
+    const sc = backOut(p); place(L, { sx: sc, sy: sc }, A * Math.min(1, p * 4), true);
+  } else if (mode === 'glitch') {
+    if (p < 1) {
+      const k = Math.floor(now * 30), amt = 1 - p, dx = (rnd(k) - 0.5) * size * 0.5 * amt, off = size * 0.08 * amt + 1;
+      place(L, { dx: dx - off }, A * 0.8, false, '#ff2a55'); place(L, { dx: dx + off }, A * 0.8, false, '#22e5ff');
+      place(L, { dx: dx * 0.3 }, A, true);
+    } else place(L, {}, A, true);
+  } else if (mode === 'wordpop' || mode === 'typewriter' || mode === 'wave') {
+    drawUnits(L, y, size, A, now, c3, mode, sp);
+  } else drawLine(L, W / 2, y + (1 - fadeIn) * 20 * u, size, fadeIn * fadeOut * oa, now, true, c3, bounce);   // classic
+  ctx.globalAlpha = 1; ctx.shadowBlur = 0; ctx.textAlign = 'center';
+}
+
+// ================= visualizer drawing =================
+function bandValues(n) {
+  const out = new Float32Array(n), g = +$('gain').value, s = +$('smooth').value;
+  const max = freq.length * 0.75;
+  for (let i = 0; i < n; i++) {
+    const a = Math.floor(Math.pow(i / n, 2) * max), b = Math.max(a + 1, Math.floor(Math.pow((i + 1) / n, 2) * max));
+    let sum = 0; for (let j = a; j < b; j++) sum += freq[j];
+    const v = Math.min(1, (sum / (b - a)) / 255 * g * (1 + i / n * 0.8));
+    smoothed[i] = smoothed[i] * s + v * (1 - s);
+    out[i] = smoothed[i];
+  }
+  return out;
+}
+
+let V = new Float32Array(64), N = 64, offlineBusy = false;
+// Updates the audio-reactive state (band values + beat detector) from `freq`. Runs once per animation frame.
+function updateState() {
+  N = +$('bars').value; V = bandValues(N);
+  const n = N, v = V;
+  const bass = (v[0] + v[1] + v[2] + v[3]) / 4;
+  pulse = bass;
+
+  // beat detection: spike over a running average triggers a decaying impulse
+  const energy = v.reduce((a, b) => a + b, 0) / n;
+  avgBass = avgBass * 0.95 + bass * 0.05; avgEnergy = avgEnergy * 0.95 + energy * 0.05;
+  if (kickCool-- <= 0 && bass > avgBass * 1.3 + 0.08) { kick = 1; kickCool = 8; }
+  if (flashCool-- <= 0 && energy > avgEnergy * 1.25 + 0.05) { flash = 1; flashCool = 20; }
+  kick *= 0.85; flash *= 0.9;
+}
+
+function draw() {
+  requestAnimationFrame(draw);
+  if (offlineBusy) return;                            // the MP4 export drives the drawing itself
+  if (analyser) { analyser.getByteFrequencyData(freq); analyser.getByteTimeDomainData(td); }
+  else { freq = freq || new Uint8Array(1024); td = td || new Uint8Array(2048).fill(128); }
+  updateState();
+  if (bgVideo) {                                      // background video follows the song's play/pause
+    if (playing && bgVideo.paused) bgVideo.play().catch(() => {});
+    else if (!playing && !bgVideo.paused) bgVideo.pause();
+  }
+  paint();
+}
+
+// Draws one frame from the current state (V, N, pulse, kick, flash).
+function paint() {
+  const W = cv.width, H = cv.height, [c0,c1,c2,c3] = THEMES[$('theme').value];
+  const n = N, v = V, bass = pulse, fxAmt = +$('fxAmt').value, u = Math.min(W, H) / 1080, gu = $('fxGlow').checked ? u : 0;
+  const bg = bgVideo || bgImg, bgW = bgVideo ? bgVideo.videoWidth : bgImg?.width, bgH = bgVideo ? bgVideo.videoHeight : bgImg?.height;
+  if (bg && bgW) {
+    const r = Math.max(W / bgW, H / bgH), s = 1 + bass * 0.04;
+    const w = bgW * r * s, h = bgH * r * s;
+    ctx.drawImage(bg, (W - w) / 2, (H - h) / 2, w, h);
+    ctx.fillStyle = 'rgba(0,0,0,.35)'; ctx.fillRect(0, 0, W, H);
+  } else {
+    const g = ctx.createRadialGradient(W/2, H/2, 0, W/2, H/2, Math.hypot(W, H) / 2);
+    g.addColorStop(0, c1); g.addColorStop(1, c0);
+    ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+  }
+
+  if ($('fxFlash').checked && flash > 0.02) {       // color flash over the background
+    ctx.globalAlpha = Math.min(0.5, flash * 0.3 * fxAmt); ctx.fillStyle = c2; ctx.fillRect(0, 0, W, H); ctx.globalAlpha = 1;
+  }
+  ctx.save();                                       // everything below shakes; the background stays put
+  if ($('fxShake').checked && kick > 0.02) {
+    const mag = kick * 22 * fxAmt * Math.min(W, H) / 1080;
+    ctx.translate((Math.random() - .5) * 2 * mag, (Math.random() - .5) * 2 * mag);
+  }
+  const grad = (x0, y0, x1, y1) => { const g = ctx.createLinearGradient(x0, y0, x1, y1); g.addColorStop(0, c2); g.addColorStop(1, c3); return g; };
+  ctx.shadowColor = c2; ctx.shadowBlur = 20 * gu;
+  const style = $('style').value;
+
+  if (style === 'none' || style === 'lyrics') {
+    // nothing drawn here; in 'lyrics' mode the lyrics themselves react to the audio
+  } else if (style === 'bars' || style === 'mirror') {
+    const bw = W / n, gap = bw * 0.25, base = style === 'bars' ? H * 0.92 : H * 0.5, maxH = style === 'bars' ? H * 0.45 : H * 0.3;
+    ctx.fillStyle = grad(0, base - maxH, 0, base + (style === 'mirror' ? maxH : 0));
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+      const h = Math.max(4, v[i] * maxH), x = i * bw + gap / 2;
+      ctx.rect(x, base - h, bw - gap, style === 'bars' ? h : h * 2);
+    }
+    ctx.fill();
+  } else if (style === 'circle') {
+    const cx = W / 2, cy = H / 2, r0 = Math.min(W, H) * (0.2 + bass * 0.03), maxH = Math.min(W, H) * 0.22;
+    ctx.strokeStyle = grad(cx - r0, cy - r0, cx + r0, cy + r0); ctx.lineWidth = Math.max(3, Math.min(W, H) * 0.006); ctx.lineCap = 'round';
+    ctx.beginPath();
+    for (let i = 0; i < n * 2; i++) {
+      const k = i < n ? i : n * 2 - 1 - i, a = (i / (n * 2)) * Math.PI * 2 - Math.PI / 2, h = 6 + v[k] * maxH;
+      ctx.moveTo(cx + Math.cos(a) * r0, cy + Math.sin(a) * r0); ctx.lineTo(cx + Math.cos(a) * (r0 + h), cy + Math.sin(a) * (r0 + h));
+    }
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = grad(0, 0, W, 0); ctx.lineWidth = Math.max(3, H * 0.005); ctx.lineJoin = 'round';
+    ctx.beginPath();
+    const step = Math.floor(td.length / 512);
+    for (let i = 0; i < 512; i++) {
+      const x = i / 511 * W, y = H * 0.5 + ((td[i * step] - 128) / 128) * H * 0.3 * +$('gain').value;
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+    }
+    ctx.stroke();
+  }
+  ctx.shadowBlur = 0;
+
+  if (logoImg) {
+    const s = 160 * u / Math.max(logoImg.width, logoImg.height) * (1 + bass * 0.05);
+    ctx.drawImage(logoImg, 40 * u, 40 * u, logoImg.width * s, logoImg.height * s);
+  }
+
+  const ts = +$('textSize').value, y = H * (style === 'lyrics' ? 0.1 : +$('textY').value);
+  ctx.textAlign = 'center'; ctx.fillStyle = '#fff'; ctx.shadowColor = 'rgba(0,0,0,.7)'; ctx.shadowBlur = 16 * gu;
+  ctx.font = fontCss(84 * u * ts, 700);
+  ctx.fillText($('title').value, W / 2, y, W * 0.9);
+  ctx.font = fontCss(44 * u * ts, 400);
+  ctx.fillStyle = c3;
+  ctx.fillText($('artist').value, W / 2, y + 70 * u * ts, W * 0.9);
+  ctx.shadowBlur = 0;
+  drawLyrics(W, H, u, c2, c3);
+  ctx.restore();
+}
+draw();
+
+// ================= export (real-time recording of canvas + audio) =================
+let rec, chunks;
+$('export').onclick = async () => {
+  if (exporting) return stopExport();
+  status('Starting recording…');
+  try {
+    if (!window.MediaRecorder) throw new Error('this browser has no MediaRecorder (try Chrome)');
+    try { await Promise.race([audioCtx.resume(), new Promise(r => setTimeout(r, 1500))]); } catch {}
+    if (!cv.captureStream) throw new Error('this browser cannot capture the canvas (try Chrome)');
+    const vTracks = cv.captureStream(30).getVideoTracks();
+    let aTracks = [];
+    try { aTracks = destNode.stream.getAudioTracks(); } catch {}
+    const stream = new MediaStream([...vTracks, ...aTracks]);
+    // try the preferred format first, then looser ones, then let the browser pick
+    const tries = [{ mimeType: RT_MIME, videoBitsPerSecond: 8e6, audioBitsPerSecond: 192e3 }, { mimeType: RT_MIME }, {}];
+    let made = null, lastErr;
+    for (const o of tries) { try { if (o.mimeType === undefined && Object.keys(o).length) continue; made = new MediaRecorder(stream, o); break; } catch (e) { lastErr = e; } }
+    if (!made) throw lastErr || new Error('could not start the recorder');
+    rec = made; chunks = [];
+    const ext = /mp4/.test(rec.mimeType) ? 'mp4' : 'webm';
+    rec.ondataavailable = e => e.data && e.data.size && chunks.push(e.data);
+    rec.onerror = e => { status('Recording error: ' + ((e.error && e.error.message) || 'unknown')); exporting && stopExport(); };
+    rec.onstop = () => {
+      if (!chunks.length) return status('Recording came out empty — nothing to save.');
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') }));
+      a.download = ($('title').value || 'video') + '.' + ext; document.body.appendChild(a); a.click(); a.remove();
+      status('Done — saved as ' + a.download + '.');
+    };
+    audioEl.currentTime = 0; if (bgVideo) bgVideo.currentTime = 0;
+    rec.start(1000); exporting = true; $('export').textContent = 'Stop & save'; $('play').disabled = $('exportMp4').disabled = true;
+    try { await audioEl.play(); playing = true; $('play').textContent = 'Pause'; }
+    catch (e) { stopExport(); throw new Error('the browser blocked audio playback (' + (e.message || e) + ')'); }
+    keepAwake(true);
+    const tick = () => { if (exporting) { status(`Recording… ${Math.floor(audioEl.currentTime)}s / ${Math.floor(audioEl.duration)}s (keep this tab visible)`); setTimeout(tick, 500); } };
+    tick();
+  } catch (err) {
+    console.error(err); exporting = false;
+    $('export').textContent = RT_LABEL; $('play').disabled = false; $('exportMp4').disabled = !MP4_OK;
+    status('Recording failed: ' + (err.message || err));
+  }
+};
+function stopExport() {
+  exporting = false; try { rec && rec.state !== 'inactive' && rec.stop(); } catch {} audioEl.pause(); playing = false;
+  $('export').textContent = RT_LABEL; $('play').disabled = false; $('exportMp4').disabled = !MP4_OK; $('play').textContent = 'Play preview';
+  keepAwake(false);
+}
+
+// ================= keep the screen awake while exporting =================
+let wakeLock = null;
+async function keepAwake(on) {
+  try {
+    if (on) {
+      if ('wakeLock' in navigator && !wakeLock) {
+        wakeLock = await navigator.wakeLock.request('screen');
+        wakeLock.addEventListener('release', () => { wakeLock = null; });
+      }
+    } else if (wakeLock) { await wakeLock.release(); wakeLock = null; }
+  } catch { /* not supported or denied — export still works, the screen just may sleep */ }
+}
+// The browser drops the lock when you leave the tab; take it back when you return mid-export.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible' && (exporting || offlineBusy)) keepAwake(true);
+});
+
+// ================= MP4 export (offline: renders frames directly, no need to play the song) =================
+const FPS = 30, FFT_N = 2048;
+const fftCos = new Float32Array(FFT_N / 2), fftSin = new Float32Array(FFT_N / 2), fftRev = new Uint16Array(FFT_N), blackman = new Float32Array(FFT_N);
+for (let i = 0; i < FFT_N / 2; i++) { fftCos[i] = Math.cos(2 * Math.PI * i / FFT_N); fftSin[i] = -Math.sin(2 * Math.PI * i / FFT_N); }
+for (let i = 0; i < FFT_N; i++) {
+  let r = 0, x = i; for (let b = 0; b < 11; b++) { r = (r << 1) | (x & 1); x >>= 1; }
+  fftRev[i] = r;
+  const a = i / FFT_N; blackman[i] = 0.42 - 0.5 * Math.cos(2 * Math.PI * a) + 0.08 * Math.cos(4 * Math.PI * a);
+}
+const fre = new Float32Array(FFT_N), fim = new Float32Array(FFT_N), fmag = new Float32Array(FFT_N / 2);
+function fft() {
+  for (let size = 2; size <= FFT_N; size <<= 1) {
+    const half = size >> 1, step = FFT_N / size;
+    for (let s = 0; s < FFT_N; s += size) for (let k = 0; k < half; k++) {
+      const wr = fftCos[k * step], wi = fftSin[k * step], a = s + k, b = a + half;
+      const tr = fre[b] * wr - fim[b] * wi, ti = fre[b] * wi + fim[b] * wr;
+      fre[b] = fre[a] - tr; fim[b] = fim[a] - ti; fre[a] += tr; fim[a] += ti;
+    }
+  }
+}
+// Rebuilds what the browser's live AnalyserNode would report at time t (same window, smoothing and dB range),
+// so the exported video reacts the same way the preview does.
+function analyseAt(mono, sr, t, tau) {
+  const start = Math.floor(t * sr) - FFT_N;
+  for (let i = 0; i < FFT_N; i++) {
+    const idx = start + i, x = idx >= 0 && idx < mono.length ? mono[idx] : 0;
+    td[i] = Math.max(0, Math.min(255, Math.floor(128 * (1 + x))));
+    fre[fftRev[i]] = x * blackman[i]; fim[fftRev[i]] = 0;
+  }
+  fft();
+  for (let k = 0; k < FFT_N / 2; k++) {
+    fmag[k] = tau * fmag[k] + (1 - tau) * Math.hypot(fre[k], fim[k]) / FFT_N;
+    const db = 20 * Math.log10(fmag[k] || 1e-12);
+    freq[k] = Math.max(0, Math.min(255, Math.floor(255 * (db + 100) / 70)));
+  }
+}
+// Yield to the browser without being slowed by background-tab timer throttling.
+const yieldCh = new MessageChannel();
+const yieldNow = () => new Promise(r => { yieldCh.port1.onmessage = () => r(); yieldCh.port2.postMessage(0); });
+const seekVideo = (v, t) => new Promise(res => {
+  if (Math.abs(v.currentTime - t) < 0.001) return res();
+  let done = false; const fin = () => { if (!done) { done = true; v.removeEventListener('seeked', fin); res(); } };
+  v.addEventListener('seeked', fin); v.currentTime = t; setTimeout(fin, 1500);
+});
+
+let cancelMp4 = false;
+$('exportMp4').onclick = async () => {
+  if (offlineBusy) { cancelMp4 = true; $('exportMp4').disabled = true; return status('Cancelling…'); }
+  if (!audioFile) return;
+  let Mp4;
+  try { Mp4 = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs'); }
+  catch { return status('Could not load the MP4 library (needs an internet connection). Use “Record in real time” instead.'); }
+
+  if (playing) { audioEl.pause(); playing = false; $('play').textContent = 'Play preview'; }
+  offlineBusy = true; cancelMp4 = false; timeOverride = 0;
+  $('exportMp4').textContent = 'Cancel MP4 export';
+  $('export').disabled = $('play').disabled = $('aspect').disabled = $('exportSize').disabled = true;
+  await keepAwake(true);
+  let venc, aenc, encErr = null;
+  const t0 = performance.now();
+  { // draw on a separate off-screen canvas at the chosen export size (same shape as the Format choice).
+    // willReadFrequently keeps it on the CPU, which avoids the slow GPU -> CPU readback of every frame.
+    const [aw, ah] = $('aspect').value.split('x').map(Number), k = +$('exportSize').value / Math.min(aw, ah);
+    const ec = document.createElement('canvas');
+    ec.width = Math.round(aw * k / 2) * 2; ec.height = Math.round(ah * k / 2) * 2;
+    cv = ec; ctx = ec.getContext('2d', { willReadFrequently: true });
+  }
+  try {
+    status('Decoding audio…');
+    const buf = await audioCtx.decodeAudioData(await audioFile.arrayBuffer());
+    const sr = buf.sampleRate, nch = Math.min(2, buf.numberOfChannels), dur = buf.duration, len = buf.length;
+    const chData = Array.from({ length: buf.numberOfChannels }, (_, c) => buf.getChannelData(c));
+    const mono = new Float32Array(len);
+    for (const d of chData) for (let i = 0; i < len; i++) mono[i] += d[i] / chData.length;
+
+    const W = cv.width, H = cv.height;
+    let vcfg = null, vname = null, acfg = null, aname = null;
+    for (const [name, codec] of [['avc', 'avc1.64002A'], ['avc', 'avc1.4D0028'], ['vp9', 'vp09.00.40.08']]) {
+      const c = { codec, width: W, height: H, bitrate: 6e6, framerate: FPS, ...(name === 'avc' ? { avc: { format: 'avc' } } : {}) };
+      if ((await VideoEncoder.isConfigSupported(c)).supported) { vcfg = c; vname = name; break; }
+    }
+    for (const [name, codec] of [['aac', 'mp4a.40.2'], ['opus', 'opus']]) {
+      const c = { codec, sampleRate: sr, numberOfChannels: nch, bitrate: 192000 };
+      if ((await AudioEncoder.isConfigSupported(c)).supported) { acfg = c; aname = name; break; }
+    }
+    if (!vcfg) throw new Error('this browser has no usable video encoder for ' + W + '×' + H);
+    if (!acfg) throw new Error('this browser has no usable audio encoder');
+
+    const target = new Mp4.ArrayBufferTarget();
+    const muxer = new Mp4.Muxer({
+      target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+      video: { codec: vname, width: W, height: H, frameRate: FPS },
+      audio: { codec: aname, numberOfChannels: nch, sampleRate: sr },
+    });
+    venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => { encErr = e; } });
+    aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => { encErr = e; } });
+    venc.configure(vcfg); aenc.configure(acfg);
+    const drain = async (enc, max) => { while (enc.state === 'configured' && enc.encodeQueueSize > max) await new Promise(r => enc.addEventListener('dequeue', r, { once: true })); };
+
+    // fresh reactive state so the export doesn't depend on what the preview was doing
+    smoothed.fill(0); fmag.fill(0); kick = flash = kickCool = flashCool = avgBass = avgEnergy = 0;
+    if (bgVideo) bgVideo.pause();
+    const total = Math.ceil(dur * FPS), tLoop = performance.now();
+    let msDraw = 0, msGrab = 0, msWait = 0, tm = performance.now();
+    const lap = () => { const n = performance.now(), d = n - tm; tm = n; return d; };
+    for (let i = 0; i < total; i++) {
+      if (cancelMp4) break;
+      if (encErr) throw encErr;
+      const t = i / FPS;
+      timeOverride = t;
+      // the live preview updates ~60 times a second, so step the reactive state twice per 30 fps frame
+      analyseAt(mono, sr, Math.max(0, t - 1 / 60), 0.8); updateState();
+      analyseAt(mono, sr, t, 0.8); updateState();
+      if (bgVideo && bgVideo.duration) await seekVideo(bgVideo, t % bgVideo.duration);
+      lap(); paint(); msDraw += lap();
+
+      const frame = new VideoFrame(cv, { timestamp: Math.round(t * 1e6), duration: Math.round(1e6 / FPS), alpha: 'discard' });
+      venc.encode(frame, { keyFrame: i % (FPS * 2) === 0 }); frame.close();
+      const a0 = Math.round(i * sr / FPS), a1 = i === total - 1 ? len : Math.min(len, Math.round((i + 1) * sr / FPS));
+      if (a1 > a0) {
+        const n = a1 - a0, data = new Float32Array(n * nch);
+        for (let c = 0; c < nch; c++) data.set(chData[c].subarray(a0, a1), c * n);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: sr, numberOfFrames: n, numberOfChannels: nch, timestamp: Math.round(a0 / sr * 1e6), data });
+        aenc.encode(ad); ad.close();
+      }
+      msGrab += lap();
+      if (i % 8 === 0) liveCtx.drawImage(cv, 0, 0, liveCv.width, liveCv.height);   // progress preview
+      await drain(venc, 8); await drain(aenc, 30); msWait += lap();
+      if (i % 10 === 0) {
+        const el = (performance.now() - tLoop) / 1000, rate = (i + 1) / Math.max(0.001, el), left = Math.round((total - i - 1) / rate);
+        const eta = left >= 90 ? Math.round(left / 60) + ' min' : left + 's';
+        const slow = i >= 40 && rate < 12 ? `\nThis phone is rendering slowly. Cancel and use “${RT_LABEL}” — it takes about as long as the song.` : '';
+        status(`Rendering MP4 (${cv.width}×${cv.height})… ${Math.round((i + 1) / total * 100)}% — ${rate.toFixed(1)} frames/sec (${(rate / FPS).toFixed(1)}× real time), about ${eta} left. Keep this page open.\nPer frame: drawing ${Math.round(msDraw / (i + 1))} ms · grabbing/encoding ${Math.round(msGrab / (i + 1))} ms · waiting on encoder ${Math.round(msWait / (i + 1))} ms` + slow);
+      }
+      await yieldNow();
+    }
+    if (cancelMp4) { status('MP4 export cancelled.'); }
+    else {
+      status('Finishing file…');
+      await venc.flush(); await aenc.flush();
+      if (encErr) throw encErr;
+      muxer.finalize();
+      const url = URL.createObjectURL(new Blob([target.buffer], { type: 'video/mp4' }));
+      const name = ($('title').value || 'video') + '.mp4';
+      const a = document.createElement('a'); a.href = url; a.download = name; a.click();
+      const link = document.createElement('a'); link.href = url; link.download = name; link.textContent = 'Tap here if the download didn’t start'; link.style.color = 'var(--acc)';
+      status(`Done in ${Math.round((performance.now() - t0) / 1000)}s (${vname === 'avc' ? 'H.264' : 'VP9'} + ${aname === 'aac' ? 'AAC' : 'Opus'}). `);
+      $('status').append(link);
+    }
+  } catch (err) { console.error(err); status('MP4 export failed: ' + (err.message || err) + ' — try “Record in real time” instead.'); }
+  for (const e of [venc, aenc]) try { e && e.state !== 'closed' && e.close(); } catch {}
+  cv = liveCv; ctx = liveCtx;
+  timeOverride = null; offlineBusy = false; cancelMp4 = false;
+  smoothed.fill(0); kick = flash = kickCool = flashCool = avgBass = avgEnergy = 0;
+  $('exportMp4').textContent = 'Export MP4 (fast)'; $('exportMp4').disabled = !MP4_OK;
+  $('export').disabled = $('play').disabled = $('aspect').disabled = $('exportSize').disabled = false;
+  keepAwake(false);
+};
+</script>
+</body>
+</html>
