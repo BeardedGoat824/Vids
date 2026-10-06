@@ -965,7 +965,7 @@ $('export').onclick = async () => {
       still = ct === lastT ? still + 1 : 0; lastT = ct;
       if (still >= 8 && !audioEl.ended) {                 // nothing moved for ~4 seconds: the phone stalled
         const at = Math.floor(ct), got = chunks.reduce((n, c) => n + c.size, 0);
-        stallMsg = `Recording stalled at ${at}s, so I stopped it and saved what was captured (${(got / 1e6).toFixed(1)} MB). ${RT_EXT === 'mp4' ? 'Switch the recording format to WebM (it won't show in your gallery, but it can be opened from Downloads), or t' : 'T'}ry a smaller Format (Vertical or Square) or untick Glow & shadows.`;
+        stallMsg = `Recording stalled at ${at}s, so I stopped it and saved what was captured (${(got / 1e6).toFixed(1)} MB). ${RT_EXT === 'mp4' ? 'Switch the recording format to WebM (it will not show in your gallery, but it can be opened from Downloads), or t' : 'T'}ry a smaller Format (Vertical or Square) or untick Glow & shadows.`;
         stopExport();
         return status(stallMsg);
       }
