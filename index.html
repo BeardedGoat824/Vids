@@ -66,7 +66,7 @@
 </head>
 <body>
 <aside>
-  <h1>Audio Visualizer</h1>
+  <h1>Audio Visualizer <small style="font-weight:400;color:var(--dim);font-size:11px">build 10-06-d</small></h1>
   <label>Music</label><input type="file" id="audioFile" accept="audio/*">
   <label>Lyrics (.lrc, or a FLAC / M4A with embedded lyrics)</label><input type="file" id="lrcFile" accept=".lrc,.txt,.flac,.m4a,.mp4">
   <label>Background image or video (optional)</label><input type="file" id="bgFile" accept="image/*,video/*">
@@ -946,8 +946,9 @@ async function recordLive() {
   const muxer = new Mp4.Muxer({ target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
     video: { codec: vname, width: W, height: H, frameRate: FPS }, audio: { codec: aname, numberOfChannels: nch, sampleRate: sr } });
   let encErr = null;
-  const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => { encErr = e; } });
-  const aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => { encErr = e; } });
+  let vN = 0, vLast = 0, aN = 0;                          // diagnostics: how many video frames / audio packets reached the file
+  const venc = new VideoEncoder({ output: (c, m) => { vN++; vLast = c.timestamp; muxer.addVideoChunk(c, m); }, error: e => { encErr = e; } });
+  const aenc = new AudioEncoder({ output: (c, m) => { aN++; muxer.addAudioChunk(c, m); }, error: e => { encErr = e; } });
   venc.configure(vcfg); aenc.configure(acfg);
 
   audioEl.currentTime = 0; if (bgVideo) bgVideo.currentTime = 0;
@@ -989,7 +990,8 @@ async function recordLive() {
       const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
       const link = document.createElement('a'); link.href = url; link.download = name; link.textContent = 'Tap here if the download didn’t start'; link.style.color = 'var(--acc)';
       const ok = vname === 'avc' && aname === 'aac';
-      status(`${stallNote}Saved ${name} (${Math.round(endT)}s, ${vname === 'avc' ? 'H.264' : 'VP9'} + ${aname === 'aac' ? 'AAC' : 'Opus'}). ${ok ? 'Standard MP4: Google Photos and editors should open it.' : 'This phone could not make H.264 + AAC, so some editors may refuse it.'} `);
+      const gap = endT - vLast / 1e6;
+      status(`${stallNote}Saved ${name} (song ${Math.round(endT)}s, ${vname === 'avc' ? 'H.264' : 'VP9'} + ${aname === 'aac' ? 'AAC' : 'Opus'}). Video: ${vN} frames, last at ${(vLast / 1e6).toFixed(1)}s. Audio: ${aN} packets. ${gap > 2 ? 'WARNING: the video stopped ' + gap.toFixed(0) + 's before the song ended, so the phone encoder dropped out. ' : ''}${ok ? 'Standard MP4.' : 'This phone could not make H.264 + AAC, so some editors may refuse it.'} `);
       $('status').append(link);
     } catch (e) { console.error(e); status('Recording failed while saving: ' + (e.message || e)); }
     for (const e of [venc, aenc]) try { e.state !== 'closed' && e.close(); } catch {}
@@ -1003,7 +1005,7 @@ async function recordLive() {
     const ct = audioEl.currentTime;
     still = ct === lastT ? still + 1 : 0; lastT = ct;
     if (still >= 8 && !audioEl.ended) { stallNote = `Stalled at ${Math.floor(ct)}s, so I saved what was captured. `; return finish(); }
-    status(`Recording… ${Math.floor(ct)}s / ${Math.floor(audioEl.duration)}s (keep this tab open and the screen on)`); setTimeout(tick, 500);
+    status(`Recording… ${Math.floor(ct)}s / ${Math.floor(audioEl.duration)}s · video frames kept: ${vN} (keep this tab open and the screen on)`); setTimeout(tick, 500);
   };
   tick(); requestAnimationFrame(grab);
 }
