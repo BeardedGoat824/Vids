@@ -168,6 +168,8 @@
     <option value="720" selected>720p (faster)</option>
     <option value="540">540p (fastest)</option>
   </select>
+  <label>Real-time recording format</label>
+  <select id="rtFormat"><option value="webm" selected>WebM (most reliable)</option><option value="mp4">MP4 (may stall on some phones)</option></select>
   <button id="exportMp4" disabled>Export MP4 (fast)</button>
   <div class="row">
     <button id="play" class="alt" disabled>Play preview</button>
@@ -201,11 +203,22 @@ const smoothed = new Float32Array(256);
 // Fast MP4 export needs the browser's built-in video + audio encoders (WebCodecs, secure pages only).
 const MP4_OK = !!(window.VideoEncoder && window.AudioEncoder && window.VideoFrame && window.AudioData);
 // Real-time recorder (plays the song while recording): MP4 where the browser supports it (recent Chrome/Safari), otherwise WebM.
-const RT_MIME = window.MediaRecorder ? ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4',
-  'video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'].find(m => MediaRecorder.isTypeSupported(m)) : undefined;
-const RT_EXT = RT_MIME && RT_MIME.startsWith('video/mp4') ? 'mp4' : 'webm';
-const RT_LABEL = 'Record in real time (.' + RT_EXT + ')';
-$('export').textContent = RT_LABEL;
+// Real-time recording format. WebM is the safe default: phones' hardware H.264 recorders can stall mid-recording.
+const RT_LIST = {
+  webm: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'],
+  mp4:  ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4'],
+};
+let RT_MIME, RT_EXT, RT_LABEL;
+function pickRtFormat() {
+  const want = $('rtFormat').value, order = want === 'mp4' ? ['mp4', 'webm'] : ['webm', 'mp4'];
+  RT_MIME = undefined;
+  if (window.MediaRecorder) for (const k of order) { RT_MIME = RT_LIST[k].find(m => MediaRecorder.isTypeSupported(m)); if (RT_MIME) break; }
+  RT_EXT = RT_MIME && RT_MIME.startsWith('video/mp4') ? 'mp4' : 'webm';
+  RT_LABEL = 'Record in real time (.' + RT_EXT + ')';
+  if (!exporting) $('export').textContent = RT_LABEL;
+}
+$('rtFormat').onchange = pickRtFormat;
+pickRtFormat();
 if (!MP4_OK) { $('exportMp4').textContent = 'MP4 export not supported in this browser'; $('exportMp4').title = 'Use “Record in real time” instead'; }
 
 // ImageBitmap copies stay "origin-clean" even when the page was opened from a local file (phones),
@@ -906,7 +919,7 @@ function paint() {
 draw();
 
 // ================= export (real-time recording of canvas + audio) =================
-let rec, chunks;
+let rec, chunks, stallMsg = '';
 $('export').onclick = async () => {
   if (exporting) return stopExport();
   status('Starting recording…');
@@ -938,14 +951,26 @@ $('export').onclick = async () => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') }));
       a.download = ($('title').value || 'video') + '.' + ext; document.body.appendChild(a); a.click(); a.remove();
-      status('Done — saved as ' + a.download + '.');
+      status(stallMsg || ('Done — saved as ' + a.download + '.')); stallMsg = '';
     };
     audioEl.currentTime = 0; if (bgVideo) bgVideo.currentTime = 0;
     rec.start(1000); exporting = true; $('export').textContent = 'Stop & save'; $('play').disabled = $('exportMp4').disabled = true;
     try { await audioEl.play(); playing = true; $('play').textContent = 'Pause'; }
     catch (e) { stopExport(); throw new Error('the browser blocked audio playback (' + (e.message || e) + ')'); }
     keepAwake(true);
-    const tick = () => { if (exporting) { status(`Recording… ${Math.floor(audioEl.currentTime)}s / ${Math.floor(audioEl.duration)}s (keep this tab visible)`); setTimeout(tick, 500); } };
+    let lastT = -1, still = 0;
+    const tick = () => {
+      if (!exporting) return;
+      const ct = audioEl.currentTime;
+      still = ct === lastT ? still + 1 : 0; lastT = ct;
+      if (still >= 8 && !audioEl.ended) {                 // nothing moved for ~4 seconds: the phone stalled
+        const at = Math.floor(ct), got = chunks.reduce((n, c) => n + c.size, 0);
+        stallMsg = `Recording stalled at ${at}s, so I stopped it and saved what was captured (${(got / 1e6).toFixed(1)} MB). ${RT_EXT === 'mp4' ? 'Switch the recording format to WebM, or t' : 'T'}ry a smaller Format (Vertical or Square) or untick Glow & shadows.`;
+        stopExport();
+        return status(stallMsg);
+      }
+      status(`Recording… ${Math.floor(ct)}s / ${Math.floor(audioEl.duration)}s (keep this tab visible)`); setTimeout(tick, 500);
+    };
     tick();
   } catch (err) {
     console.error(err); exporting = false;
