@@ -900,9 +900,8 @@ $('export').onclick = async () => {
     let vTracks;
     try { vTracks = cv.captureStream(30).getVideoTracks(); }
     catch (e) {
-      if (/origin-clean|tainted|security/i.test(e.message + e.name)) throw new Error(bgVideo
-        ? 'the background video makes this canvas unrecordable when the page is opened from a file. Open the visualizer from its web link instead, or remove the background video.'
-        : 'a picture on the canvas blocks recording when the page is opened from a file. Open the visualizer from its web link, or remove the background/logo picture.');
+      if (/origin-clean|tainted|security/i.test(e.message + e.name)) throw new Error(
+        'a background or logo file is stopping the browser from recording. Try removing the background/logo, or open the visualizer from its web link instead of from a file.');
       throw e;
     }
     let aTracks = [];
