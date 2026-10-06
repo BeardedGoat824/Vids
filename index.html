@@ -168,12 +168,12 @@
     <option value="720" selected>720p (faster)</option>
     <option value="540">540p (fastest)</option>
   </select>
-  <label>Real-time recording format</label>
-  <select id="rtFormat"><option value="mp4" selected>MP4 (shows up in your gallery)</option><option value="webm">WebM (fallback if MP4 stalls; gallery apps often hide it)</option></select>
-  <button id="exportMp4" disabled>Export MP4 (fast)</button>
+  <label>Recording format</label>
+  <select id="rtFormat"><option value="mp4" selected>MP4 (editable, works in Google Photos)</option><option value="webm">WebM (basic fallback, gallery apps often hide it)</option></select>
+  <button id="export" disabled>Record in real time</button>
   <div class="row">
     <button id="play" class="alt" disabled>Play preview</button>
-    <button id="export" class="alt" disabled>Export WebM</button>
+    <button id="exportMp4" class="alt" disabled>Offline MP4 (slow on phones)</button>
   </div>
   <div id="status">Load a song to begin.</div>
 </aside>
@@ -219,7 +219,7 @@ function pickRtFormat() {
 }
 $('rtFormat').onchange = pickRtFormat;
 pickRtFormat();
-if (!MP4_OK) { $('exportMp4').textContent = 'MP4 export not supported in this browser'; $('exportMp4').title = 'Use “Record in real time” instead'; }
+if (!MP4_OK) { $('exportMp4').textContent = 'MP4 export not supported in this browser'; $('exportMp4').title = 'Use Record in real time instead'; }
 
 // ImageBitmap copies stay "origin-clean" even when the page was opened from a local file (phones),
 // which a plain <img> from a blob URL does not — a tainted canvas cannot be recorded or exported.
@@ -920,8 +920,104 @@ draw();
 
 // ================= export (real-time recording of canvas + audio) =================
 let rec, chunks, stallMsg = '';
+// ---- Real-time recording straight into a normal MP4 (H.264 + AAC when the phone has them) ----
+// The song plays at normal speed while each frame the preview draws is handed to the phone's video encoder.
+// The result is a standard MP4 with its length stored up front, so Google Photos and video editors can open it.
+let liveRec = null;
+async function recordLive() {
+  status('Getting ready…');
+  const Mp4 = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs');
+  const W = cv.width, H = cv.height;
+  try { await Promise.race([audioCtx.resume(), new Promise(r => setTimeout(r, 1500))]); } catch {}
+  const buf = await audioCtx.decodeAudioData(await audioFile.arrayBuffer());
+  const sr = buf.sampleRate, nch = Math.min(2, buf.numberOfChannels), len = buf.length;
+  const chData = Array.from({ length: nch }, (_, c) => buf.getChannelData(c));
+  let vcfg = null, vname = null, acfg = null, aname = null;
+  for (const [name, codec] of [['avc', 'avc1.64002A'], ['avc', 'avc1.640028'], ['avc', 'avc1.4D0028'], ['avc', 'avc1.4D4028'], ['avc', 'avc1.42E028'], ['avc', 'avc1.42001F'], ['vp9', 'vp09.00.40.08']]) {
+    const c = { codec, width: W, height: H, bitrate: 6e6, framerate: FPS, latencyMode: 'realtime', ...(name === 'avc' ? { avc: { format: 'avc' } } : {}) };
+    if ((await VideoEncoder.isConfigSupported(c)).supported) { vcfg = c; vname = name; break; }
+  }
+  for (const [name, codec] of [['aac', 'mp4a.40.2'], ['opus', 'opus']]) {
+    const c = { codec, sampleRate: sr, numberOfChannels: nch, bitrate: 192000 };
+    if ((await AudioEncoder.isConfigSupported(c)).supported) { acfg = c; aname = name; break; }
+  }
+  if (!vcfg || !acfg) throw new Error('this phone has no usable video/audio encoder for ' + W + '×' + H);
+  const target = new Mp4.ArrayBufferTarget();
+  const muxer = new Mp4.Muxer({ target, fastStart: 'in-memory', firstTimestampBehavior: 'offset',
+    video: { codec: vname, width: W, height: H, frameRate: FPS }, audio: { codec: aname, numberOfChannels: nch, sampleRate: sr } });
+  let encErr = null;
+  const venc = new VideoEncoder({ output: (c, m) => muxer.addVideoChunk(c, m), error: e => { encErr = e; } });
+  const aenc = new AudioEncoder({ output: (c, m) => muxer.addAudioChunk(c, m), error: e => { encErr = e; } });
+  venc.configure(vcfg); aenc.configure(acfg);
+
+  audioEl.currentTime = 0; if (bgVideo) bgVideo.currentTime = 0;
+  await audioEl.play();                                   // throws before anything starts if the browser blocks audio
+  playing = true; exporting = true; $('play').textContent = 'Pause';
+  $('export').textContent = 'Stop & save'; $('play').disabled = $('exportMp4').disabled = true;
+  keepAwake(true);
+
+  let nextIdx = 0, running = true, stallNote = '';
+  const grab = () => {                                    // runs right after the preview has drawn each frame
+    if (!running) return;
+    requestAnimationFrame(grab);
+    if (encErr) return finish();
+    const n = Math.floor(audioEl.currentTime * FPS);
+    for (let g = 0; nextIdx <= n && g < 4 && venc.encodeQueueSize < 16; g++, nextIdx++) {
+      const f = new VideoFrame(cv, { timestamp: Math.round(nextIdx * 1e6 / FPS), duration: Math.round(1e6 / FPS), alpha: 'discard' });
+      venc.encode(f, { keyFrame: nextIdx % (FPS * 2) === 0 }); f.close();
+    }
+    if (nextIdx <= n) nextIdx = n + 1;                    // fell behind: skip ahead instead of piling up
+  };
+  const finish = async () => {
+    if (!running) return; running = false; exporting = false;
+    audioEl.pause(); playing = false;
+    status('Finishing the file… a few seconds.');
+    try {
+      if (encErr) throw encErr;
+      const endT = audioEl.currentTime, endS = Math.min(len, Math.round(endT * sr));
+      await venc.flush();
+      for (let a0 = 0; a0 < endS; a0 += sr) {
+        const a1 = Math.min(endS, a0 + sr), n = a1 - a0, data = new Float32Array(n * nch);
+        for (let c = 0; c < nch; c++) data.set(chData[c].subarray(a0, a1), c * n);
+        const ad = new AudioData({ format: 'f32-planar', sampleRate: sr, numberOfFrames: n, numberOfChannels: nch, timestamp: Math.round(a0 / sr * 1e6), data });
+        aenc.encode(ad); ad.close();
+        while (aenc.encodeQueueSize > 8) await new Promise(r => aenc.addEventListener('dequeue', r, { once: true }));
+      }
+      await aenc.flush(); if (encErr) throw encErr;
+      muxer.finalize();
+      const name = ($('title').value || 'video') + '.mp4', url = URL.createObjectURL(new Blob([target.buffer], { type: 'video/mp4' }));
+      const a = document.createElement('a'); a.href = url; a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      const link = document.createElement('a'); link.href = url; link.download = name; link.textContent = 'Tap here if the download didn’t start'; link.style.color = 'var(--acc)';
+      const ok = vname === 'avc' && aname === 'aac';
+      status(`${stallNote}Saved ${name} (${Math.round(endT)}s, ${vname === 'avc' ? 'H.264' : 'VP9'} + ${aname === 'aac' ? 'AAC' : 'Opus'}). ${ok ? 'Standard MP4: Google Photos and editors should open it.' : 'This phone could not make H.264 + AAC, so some editors may refuse it.'} `);
+      $('status').append(link);
+    } catch (e) { console.error(e); status('Recording failed while saving: ' + (e.message || e)); }
+    for (const e of [venc, aenc]) try { e.state !== 'closed' && e.close(); } catch {}
+    liveRec = null; $('export').textContent = RT_LABEL; $('play').disabled = false; $('exportMp4').disabled = !MP4_OK; $('play').textContent = 'Play preview';
+    keepAwake(false);
+  };
+  liveRec = { finish };
+  let lastT = -1, still = 0;
+  const tick = () => {
+    if (!running) return;
+    const ct = audioEl.currentTime;
+    still = ct === lastT ? still + 1 : 0; lastT = ct;
+    if (still >= 8 && !audioEl.ended) { stallNote = `Stalled at ${Math.floor(ct)}s, so I saved what was captured. `; return finish(); }
+    status(`Recording… ${Math.floor(ct)}s / ${Math.floor(audioEl.duration)}s (keep this tab open and the screen on)`); setTimeout(tick, 500);
+  };
+  tick(); requestAnimationFrame(grab);
+}
+
 $('export').onclick = async () => {
   if (exporting) return stopExport();
+  if ($('rtFormat').value === 'mp4' && MP4_OK) {
+    try { return await recordLive(); }
+    catch (e) {
+      console.error(e); exporting = false; playing = false;
+      status('The editable-MP4 recorder could not start (' + (e.message || e) + '), so I am using the basic recorder instead.');
+      await new Promise(r => setTimeout(r, 1500));
+    }
+  }
   status('Starting recording…');
   try {
     if (!window.MediaRecorder) throw new Error('this browser has no MediaRecorder (try Chrome)');
@@ -951,7 +1047,7 @@ $('export').onclick = async () => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') }));
       a.download = ($('title').value || 'video') + '.' + ext; document.body.appendChild(a); a.click(); a.remove();
-      status(stallMsg || ('Done — saved as ' + a.download + '.' + (ext === 'mp4' ? ' Note: real-time MP4s are streaming-style files; some editors cannot open them. For editing, use Export MP4 (fast).' : ''))); stallMsg = '';
+      status(stallMsg || ('Done — saved as ' + a.download + '.' + (ext === 'mp4' ? '' : ''))); stallMsg = '';
     };
     audioEl.currentTime = 0; if (bgVideo) bgVideo.currentTime = 0;
     rec.start(1000); exporting = true; $('export').textContent = 'Stop & save'; $('play').disabled = $('exportMp4').disabled = true;
@@ -979,6 +1075,7 @@ $('export').onclick = async () => {
   }
 };
 function stopExport() {
+  if (liveRec) { liveRec.finish(); return; }
   exporting = false; try { rec && rec.state !== 'inactive' && rec.stop(); } catch {} audioEl.pause(); playing = false;
   $('export').textContent = RT_LABEL; $('play').disabled = false; $('exportMp4').disabled = !MP4_OK; $('play').textContent = 'Play preview';
   keepAwake(false);
@@ -1052,7 +1149,7 @@ $('exportMp4').onclick = async () => {
   if (!audioFile) return;
   let Mp4;
   try { Mp4 = await import('https://cdn.jsdelivr.net/npm/mp4-muxer@5.2.2/build/mp4-muxer.mjs'); }
-  catch { return status('Could not load the MP4 library (needs an internet connection). Use “Record in real time” instead.'); }
+  catch { return status('Could not load the MP4 library (needs an internet connection). Use Record in real time instead.'); }
 
   if (playing) { audioEl.pause(); playing = false; $('play').textContent = 'Play preview'; }
   offlineBusy = true; cancelMp4 = false; timeOverride = 0;
@@ -1156,7 +1253,7 @@ $('exportMp4').onclick = async () => {
   cv = liveCv; ctx = liveCtx;
   timeOverride = null; offlineBusy = false; cancelMp4 = false;
   smoothed.fill(0); kick = flash = kickCool = flashCool = avgBass = avgEnergy = 0;
-  $('exportMp4').textContent = 'Export MP4 (fast)'; $('exportMp4').disabled = !MP4_OK;
+  $('exportMp4').textContent = 'Offline MP4 (slow on phones)'; $('exportMp4').disabled = !MP4_OK;
   $('export').disabled = $('play').disabled = $('aspect').disabled = $('exportSize').disabled = false;
   keepAwake(false);
 };
