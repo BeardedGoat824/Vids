@@ -28,6 +28,7 @@
   #status { color:var(--dim); font-size:13px; min-height:18px; margin-top:6px; white-space:pre-line; }
   .row { display:flex; gap:8px; } .row > * { flex:1; min-width:0; }
   main, aside { min-width:0; }
+  .val { float:right; color:var(--fg); text-transform:none; letter-spacing:0; }
   html { -webkit-text-size-adjust:100%; }
 
   /* ===== Mobile / small screens ===== */
@@ -97,9 +98,10 @@
 
   <label>Title</label><input type="text" id="title" value="Song Title">
   <label>Artist</label><input type="text" id="artist" value="Artist Name">
-  <label>Text size</label><input type="range" id="textSize" min="0.5" max="2" step="0.1" value="1">
+  <label>Title &amp; artist size <span id="textSizeV" class="val">100%</span></label><input type="range" id="textSize" min="0.5" max="2" step="0.1" value="1">
   <label>Text position</label><input type="range" id="textY" min="0.1" max="0.9" step="0.01" value="0.35">
   <label><input type="checkbox" id="showLyrics" checked> Show lyrics</label>
+  <label>Lyric size <span id="lyricSizeV" class="val">100%</span></label><input type="range" id="lyricSize" min="0.4" max="3" step="0.05" value="1">
   <label>Lyrics position</label><input type="range" id="lyricsY" min="0.5" max="0.95" step="0.01" value="0.78">
   <label>Lyric animation</label>
   <select id="lyricAnim">
@@ -610,13 +612,28 @@ const fontCss = (size, weight, force) => {
 $('lyricFont').onchange = () => { const f = $('lyricFont').value; if (f) document.fonts.load(`40px ${f}`).catch(() => {}); };
 $('fontFile').onchange = async e => {
   const f = e.target.files[0]; if (!f) return;
-  try {
-    const ff = new FontFace('CustomLyric', await f.arrayBuffer()); await ff.load(); document.fonts.add(ff);
-    let o = [...$('lyricFont').options].find(o => o.dataset.custom);
-    if (!o) { o = new Option('', '"CustomLyric"'); o.dataset.custom = 1; $('lyricFont').add(o); }
-    o.text = 'Uploaded: ' + f.name; $('lyricFont').value = '"CustomLyric"';
-  } catch { status('Could not load that font file.'); }
+  try { const buf = await f.arrayBuffer(); await installFont(f.name, buf.slice(0)); saveFont(f.name, buf); }
+  catch { status('Could not load that font file.'); }
 };
+
+for (const id of ['textSize', 'lyricSize']) {
+  const upd = () => { $(id + 'V').textContent = Math.round(+$(id).value * 100) + '%'; };
+  $(id).addEventListener('input', upd); upd();
+}
+
+// Remember an uploaded font on this device so it does not have to be picked again each visit.
+const fontDB = () => new Promise((res, rej) => { const r = indexedDB.open('viz-fonts', 1); r.onupgradeneeded = () => r.result.createObjectStore('f'); r.onsuccess = () => res(r.result); r.onerror = () => rej(r.error); });
+async function saveFont(name, buf) { try { const db = await fontDB(); db.transaction('f', 'readwrite').objectStore('f').put({ name, buf }, 'custom'); } catch {} }
+async function installFont(name, buf) {
+  const ff = new FontFace('CustomLyric', buf); await ff.load(); document.fonts.add(ff);
+  let o = [...$('lyricFont').options].find(o => o.dataset.custom);
+  if (!o) { o = new Option('', '"CustomLyric"'); o.dataset.custom = 1; $('lyricFont').add(o); }
+  o.text = 'Uploaded: ' + name; $('lyricFont').value = '"CustomLyric"';
+}
+(async () => { try {
+  const db = await fontDB(), rq = db.transaction('f').objectStore('f').get('custom');
+  rq.onsuccess = () => { const v = rq.result; if (v) installFont(v.name, v.buf).catch(() => {}); };
+} catch {} })();
 
 // ================= lyrics drawing =================
 let pulse = 0;   // smoothed bass energy 0..1, set each frame
@@ -720,7 +737,7 @@ function drawLyrics(W, H, u, c2, c3) {
   if (i < 0) return;
   const asViz = $('style').value === 'lyrics';
   const y = H * (asViz ? 0.5 : +$('lyricsY').value);
-  const size = (asViz ? 96 : 56) * u * +$('textSize').value * (asViz ? 1 + pulse * 0.12 : 1);
+  const size = (asViz ? 96 : 56) * u * +$('lyricSize').value * (asViz ? 1 + pulse * 0.12 : 1);
   const gu = $('fxGlow').checked ? u : 0, oa = +$('lyricAlpha').value;
   const L = lines[i], fadeIn = Math.min(1, (now - L.t) / 0.25);
   const fadeOut = Math.max(0, Math.min(1, 1 - (now - (L.end + 1.5)) / 0.5));   // hide during long gaps
