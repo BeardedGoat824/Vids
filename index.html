@@ -951,7 +951,7 @@ $('export').onclick = async () => {
       const a = document.createElement('a');
       a.href = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType || (ext === 'mp4' ? 'video/mp4' : 'video/webm') }));
       a.download = ($('title').value || 'video') + '.' + ext; document.body.appendChild(a); a.click(); a.remove();
-      status(stallMsg || ('Done — saved as ' + a.download + '.')); stallMsg = '';
+      status(stallMsg || ('Done — saved as ' + a.download + '.' + (ext === 'mp4' ? ' Note: real-time MP4s are streaming-style files; some editors cannot open them. For editing, use Export MP4 (fast).' : ''))); stallMsg = '';
     };
     audioEl.currentTime = 0; if (bgVideo) bgVideo.currentTime = 0;
     rec.start(1000); exporting = true; $('export').textContent = 'Stop & save'; $('play').disabled = $('exportMp4').disabled = true;
@@ -1078,7 +1078,7 @@ $('exportMp4').onclick = async () => {
 
     const W = cv.width, H = cv.height;
     let vcfg = null, vname = null, acfg = null, aname = null;
-    for (const [name, codec] of [['avc', 'avc1.64002A'], ['avc', 'avc1.4D0028'], ['vp9', 'vp09.00.40.08']]) {
+    for (const [name, codec] of [['avc', 'avc1.64002A'], ['avc', 'avc1.640028'], ['avc', 'avc1.4D0028'], ['avc', 'avc1.4D4028'], ['avc', 'avc1.42E028'], ['avc', 'avc1.42001F'], ['vp9', 'vp09.00.40.08']]) {
       const c = { codec, width: W, height: H, bitrate: 6e6, framerate: FPS, ...(name === 'avc' ? { avc: { format: 'avc' } } : {}) };
       if ((await VideoEncoder.isConfigSupported(c)).supported) { vcfg = c; vname = name; break; }
     }
@@ -1147,7 +1147,8 @@ $('exportMp4').onclick = async () => {
       const name = ($('title').value || 'video') + '.mp4';
       const a = document.createElement('a'); a.href = url; a.download = name; a.click();
       const link = document.createElement('a'); link.href = url; link.download = name; link.textContent = 'Tap here if the download didn’t start'; link.style.color = 'var(--acc)';
-      status(`Done in ${Math.round((performance.now() - t0) / 1000)}s (${vname === 'avc' ? 'H.264' : 'VP9'} + ${aname === 'aac' ? 'AAC' : 'Opus'}). `);
+      const editable = vname === 'avc' && aname === 'aac';
+      status(`Done in ${Math.round((performance.now() - t0) / 1000)}s (${vname === 'avc' ? 'H.264' : 'VP9'} + ${aname === 'aac' ? 'AAC' : 'Opus'}).${editable ? ' Standard MP4: editors should open it.' : ' This phone could not make H.264 + AAC, so video editors may refuse this file. Try 720p or 540p, or Record in real time.'} `);
       $('status').append(link);
     }
   } catch (err) { console.error(err); status('MP4 export failed: ' + (err.message || err) + ' — try “Record in real time” instead.'); }
