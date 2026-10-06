@@ -206,7 +206,13 @@ const RT_LABEL = 'Record in real time (.' + RT_EXT + ')';
 $('export').textContent = RT_LABEL;
 if (!MP4_OK) { $('exportMp4').textContent = 'MP4 export not supported in this browser'; $('exportMp4').title = 'Use “Record in real time” instead'; }
 
-function loadImg(file, cb) { if (!file) return cb(null); const i = new Image(); i.onload = () => cb(i); i.src = URL.createObjectURL(file); }
+// ImageBitmap copies stay "origin-clean" even when the page was opened from a local file (phones),
+// which a plain <img> from a blob URL does not — a tainted canvas cannot be recorded or exported.
+function loadImg(file, cb) {
+  if (!file) return cb(null);
+  const viaImg = () => { const i = new Image(); i.onload = () => cb(i); i.src = URL.createObjectURL(file); };
+  if (window.createImageBitmap) createImageBitmap(file).then(cb, viaImg); else viaImg();
+}
 let bgVideo = null;
 $('bgFile').onchange = e => {
   const f = e.target.files[0]; if (!f) return;
@@ -891,7 +897,14 @@ $('export').onclick = async () => {
     if (!window.MediaRecorder) throw new Error('this browser has no MediaRecorder (try Chrome)');
     try { await Promise.race([audioCtx.resume(), new Promise(r => setTimeout(r, 1500))]); } catch {}
     if (!cv.captureStream) throw new Error('this browser cannot capture the canvas (try Chrome)');
-    const vTracks = cv.captureStream(30).getVideoTracks();
+    let vTracks;
+    try { vTracks = cv.captureStream(30).getVideoTracks(); }
+    catch (e) {
+      if (/origin-clean|tainted|security/i.test(e.message + e.name)) throw new Error(bgVideo
+        ? 'the background video makes this canvas unrecordable when the page is opened from a file. Open the visualizer from its web link instead, or remove the background video.'
+        : 'a picture on the canvas blocks recording when the page is opened from a file. Open the visualizer from its web link, or remove the background/logo picture.');
+      throw e;
+    }
     let aTracks = [];
     try { aTracks = destNode.stream.getAudioTracks(); } catch {}
     const stream = new MediaStream([...vTracks, ...aTracks]);
