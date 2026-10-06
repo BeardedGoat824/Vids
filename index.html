@@ -169,7 +169,7 @@
     <option value="540">540p (fastest)</option>
   </select>
   <label>Real-time recording format</label>
-  <select id="rtFormat"><option value="webm" selected>WebM (most reliable)</option><option value="mp4">MP4 (may stall on some phones)</option></select>
+  <select id="rtFormat"><option value="mp4" selected>MP4 (shows up in your gallery)</option><option value="webm">WebM (fallback if MP4 stalls; gallery apps often hide it)</option></select>
   <button id="exportMp4" disabled>Export MP4 (fast)</button>
   <div class="row">
     <button id="play" class="alt" disabled>Play preview</button>
@@ -203,7 +203,7 @@ const smoothed = new Float32Array(256);
 // Fast MP4 export needs the browser's built-in video + audio encoders (WebCodecs, secure pages only).
 const MP4_OK = !!(window.VideoEncoder && window.AudioEncoder && window.VideoFrame && window.AudioData);
 // Real-time recorder (plays the song while recording): MP4 where the browser supports it (recent Chrome/Safari), otherwise WebM.
-// Real-time recording format. WebM is the safe default: phones' hardware H.264 recorders can stall mid-recording.
+// Real-time recording format. MP4 is the default because gallery apps usually hide .webm files; WebM is the fallback if a phone's H.264 recorder stalls.
 const RT_LIST = {
   webm: ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm'],
   mp4:  ['video/mp4;codecs=avc1.640028,mp4a.40.2', 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', 'video/mp4'],
@@ -965,7 +965,7 @@ $('export').onclick = async () => {
       still = ct === lastT ? still + 1 : 0; lastT = ct;
       if (still >= 8 && !audioEl.ended) {                 // nothing moved for ~4 seconds: the phone stalled
         const at = Math.floor(ct), got = chunks.reduce((n, c) => n + c.size, 0);
-        stallMsg = `Recording stalled at ${at}s, so I stopped it and saved what was captured (${(got / 1e6).toFixed(1)} MB). ${RT_EXT === 'mp4' ? 'Switch the recording format to WebM, or t' : 'T'}ry a smaller Format (Vertical or Square) or untick Glow & shadows.`;
+        stallMsg = `Recording stalled at ${at}s, so I stopped it and saved what was captured (${(got / 1e6).toFixed(1)} MB). ${RT_EXT === 'mp4' ? 'Switch the recording format to WebM (it won't show in your gallery, but it can be opened from Downloads), or t' : 'T'}ry a smaller Format (Vertical or Square) or untick Glow & shadows.`;
         stopExport();
         return status(stallMsg);
       }
